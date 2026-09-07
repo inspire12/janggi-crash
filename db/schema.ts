@@ -9,6 +9,7 @@ export const players = sqliteTable('players', {
   losses: integer('losses').notNull().default(0),
   draws: integer('draws').notNull().default(0),
   streak: integer('streak').notNull().default(0),
+  termsAcceptedAt: integer('terms_accepted_at').notNull().default(0),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 });

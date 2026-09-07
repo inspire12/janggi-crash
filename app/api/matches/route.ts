@@ -1,6 +1,6 @@
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { getDatabase } from '@/db';
-import { ensurePlayer, type PlayerProfile } from '@/db/players';
+import { getPlayer, type PlayerProfile } from '@/db/players';
 import { applyMove, isCheckmate, legalMoves, type Piece, type Side } from '@/lib/janggi';
 import { eloChange, rankForElo } from '@/lib/rating';
 
@@ -43,7 +43,8 @@ async function player(id: string) {
 export async function GET(request: Request) {
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
-  await ensurePlayer(user);
+  const account = await getPlayer(user.userId);
+  if (!account || account.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   const matchId = new URL(request.url).searchParams.get('id');
   if (!matchId) return Response.json({ error: '대국 ID가 필요합니다.' }, { status: 400 });
   const match = await ownedMatch(matchId, user.userId);
@@ -80,7 +81,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
-  await ensurePlayer(user);
+  const account = await getPlayer(user.userId);
+  if (!account || account.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   const body = (await request.json().catch(() => ({}))) as {
     matchId?: string;
     action?: 'move' | 'resign';

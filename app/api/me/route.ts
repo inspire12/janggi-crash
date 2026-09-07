@@ -1,14 +1,15 @@
 import { getChatGPTUser } from '@/app/chatgpt-auth';
-import { ensurePlayer } from '@/db/players';
+import { getPlayer } from '@/db/players';
 import { rankForElo } from '@/lib/rating';
 
 export async function GET() {
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
-  const profile = await ensurePlayer(user);
-  if (!profile) return Response.json({ error: '프로필을 불러오지 못했습니다.' }, { status: 500 });
+  const profile = await getPlayer(user.userId);
+  if (!profile || profile.terms_accepted_at === 0) return Response.json({ registered: false }, { status: 404 });
   const games = profile.wins + profile.losses + profile.draws;
   return Response.json({
+    registered: true,
     id: profile.id,
     displayName: profile.display_name,
     elo: profile.elo,

@@ -1,0 +1,1 @@
+ALTER TABLE `players` ADD `terms_accepted_at` integer DEFAULT 0 NOT NULL;

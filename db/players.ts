@@ -10,28 +10,35 @@ export type PlayerProfile = {
   losses: number;
   draws: number;
   streak: number;
+  terms_accepted_at: number;
 };
 
-export async function ensurePlayer(user: ChatGPTUser) {
+export async function getPlayer(userId: string) {
+  return getDatabase()
+    .prepare(
+      `SELECT id, email, display_name, elo, wins, losses, draws, streak, terms_accepted_at
+       FROM players WHERE id = ?`,
+    )
+    .bind(userId)
+    .first<PlayerProfile>();
+}
+
+export async function createPlayer(user: ChatGPTUser, displayName: string) {
   const db = getDatabase();
   const now = Date.now();
-  await db
+  const result = await db
     .prepare(
       `INSERT INTO players
-       (id, email, display_name, elo, wins, losses, draws, streak, created_at, updated_at)
-       VALUES (?, ?, ?, 1200, 0, 0, 0, 0, ?, ?)
+       (id, email, display_name, elo, wins, losses, draws, streak, terms_accepted_at, created_at, updated_at)
+       VALUES (?, ?, ?, 1200, 0, 0, 0, 0, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          email = excluded.email,
          display_name = excluded.display_name,
-         updated_at = excluded.updated_at`,
+         terms_accepted_at = excluded.terms_accepted_at,
+         updated_at = excluded.updated_at
+       WHERE players.terms_accepted_at = 0`,
     )
-    .bind(user.userId, user.email, user.displayName, now, now)
+    .bind(user.userId, user.email, displayName, now, now, now)
     .run();
-  return db
-    .prepare(
-      `SELECT id, email, display_name, elo, wins, losses, draws, streak
-       FROM players WHERE id = ?`,
-    )
-    .bind(user.userId)
-    .first<PlayerProfile>();
+  return { created: result.meta.changes === 1, profile: await getPlayer(user.userId) };
 }

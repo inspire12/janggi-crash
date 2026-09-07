@@ -1,6 +1,6 @@
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { getDatabase } from '@/db';
-import { ensurePlayer } from '@/db/players';
+import { getPlayer } from '@/db/players';
 import { initialPieces } from '@/lib/janggi';
 
 type ActiveMatch = { id: string };
@@ -9,7 +9,8 @@ type QueueOpponent = { user_id: string; elo: number };
 export async function GET() {
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
-  await ensurePlayer(user);
+  const profile = await getPlayer(user.userId);
+  if (!profile || profile.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   const db = getDatabase();
   const active = await db
     .prepare(
@@ -30,8 +31,8 @@ export async function POST(request: Request) {
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
   const body = (await request.json().catch(() => ({}))) as { action?: string };
-  const profile = await ensurePlayer(user);
-  if (!profile) return Response.json({ error: '프로필을 만들지 못했습니다.' }, { status: 500 });
+  const profile = await getPlayer(user.userId);
+  if (!profile || profile.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   const db = getDatabase();
 
   if (body.action === 'cancel') {

@@ -29,6 +29,14 @@ export async function requireChatGPTUser(returnTo: string) {
   redirect(`/signin-with-chatgpt?return_to=${encodeURIComponent(safePath(returnTo))}`);
 }
 
+export function chatGPTSignInPath(returnTo: string) {
+  return `/signin-with-chatgpt?return_to=${encodeURIComponent(safePath(returnTo))}`;
+}
+
+export function chatGPTSignOutPath(returnTo = '/') {
+  return `/signout-with-chatgpt?return_to=${encodeURIComponent(safePath(returnTo))}`;
+}
+
 function safePath(value: string) {
   return value.startsWith('/') && !value.startsWith('//') ? value : '/';
 }
