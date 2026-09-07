@@ -2,12 +2,12 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Radio, Shield } from 'lucide-react';
+import { ArrowLeft, MessageCircle, Radio, Send, Shield, UserX } from 'lucide-react';
 import { legalMoves, type Piece, type Point, type Side } from '@/lib/janggi';
 
-type Player = { side?: Side; displayName?: string; elo?: number; rank?: { name: string; key: string } };
+type Player = { id?: string; side?: Side; displayName?: string; elo?: number; rank?: { name: string; key: string } };
 type Payload = {
-  match: { id: string; status: 'active' | 'finished'; turn: Side; board: Piece[]; version: number; winnerSide: Side | null; resultReason: string | null };
+  match: { id: string; status: 'active' | 'finished'; turn: Side; board: Piece[]; version: number; winnerSide: Side | null; resultReason: string | null; choTimeMs: number; hanTimeMs: number; clockSyncedAt: number };
   you: Player & { side: Side };
   opponent: Player;
 };
@@ -17,6 +17,7 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [now, setNow] = useState(0);
 
   const refresh = useCallback(async () => {
     const response = await fetch(`/api/matches?id=${encodeURIComponent(matchId)}`, { cache: 'no-store' });
@@ -36,6 +37,10 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
       window.clearInterval(timer);
     };
   }, [refresh]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const selectedPiece = data?.match.board.find((piece) => piece.id === selected);
   const targets = useMemo(
@@ -43,6 +48,12 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
     [selectedPiece, data],
   );
   const isMyTurn = data?.match.status === 'active' && data.match.turn === data.you.side;
+  const clock = (side: Side) => {
+    if (!data) return 0;
+    const base = side === 'cho' ? data.match.choTimeMs : data.match.hanTimeMs;
+    const clientNow = now || data.match.clockSyncedAt;
+    return Math.max(0, base - (data.match.status === 'active' && data.match.turn === side ? clientNow - data.match.clockSyncedAt : 0));
+  };
 
   function choose(piece: Piece) {
     if (!data || !isMyTurn || sending) return;
@@ -98,7 +109,7 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
         <Link className="text-btn" href="/lobby"><ArrowLeft size={15} /> 로비</Link>
       </header>
       <section className="online-match-layout">
-        <OnlinePlayer player={data.opponent} side={data.you.side === 'cho' ? 'han' : 'cho'} active={!isMyTurn && !result} label="상대" />
+        <OnlinePlayer player={data.opponent} side={data.you.side === 'cho' ? 'han' : 'cho'} active={!isMyTurn && !result} label="상대" timeMs={clock(data.you.side === 'cho' ? 'han' : 'cho')} />
         <div className="arena online-arena">
           <div className="turn-indicator"><span className={data.match.turn} />{result ?? (isMyTurn ? '당신의 차례' : '상대의 차례')}</div>
           <div className="board-frame"><div className="board" role="grid" aria-label="온라인 장기판">
@@ -109,18 +120,69 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
           </div></div>
           <div className="status-strip"><span className="status-dot" /><p>{error || (result ? `대국 종료 · ${result}` : isMyTurn ? '기물을 선택해 수를 두세요.' : '상대의 수를 기다리고 있습니다.')}</p>{data.match.status === 'active' && <button className="resign-button" onClick={() => void resign()}>기권</button>}</div>
         </div>
-        <OnlinePlayer player={data.you} side={data.you.side} active={Boolean(isMyTurn)} label="나" />
+        <OnlinePlayer player={data.you} side={data.you.side} active={Boolean(isMyTurn)} label="나" timeMs={clock(data.you.side)} />
       </section>
+      <BattleChat matchId={matchId} youId={data.you.id ?? ''} opponentId={data.opponent.id ?? ''} />
     </main>
   );
 }
 
-function OnlinePlayer({ player, side, active, label }: { player: Player; side: Side; active: boolean; label: string }) {
+function OnlinePlayer({ player, side, active, label, timeMs }: { player: Player; side: Side; active: boolean; label: string; timeMs: number }) {
   return <aside className={`player-card ${side}-card online-player ${active ? 'player-active' : ''}`}>
     <span className="side-label">{label} · {side === 'cho' ? '楚' : '漢'}</span>
     <div className="online-avatar"><Shield size={24} /></div>
     <h2>{player.displayName ?? '지휘관'}</h2>
     <div className="online-rating"><strong>{player.elo ?? 1200}</strong> ELO</div>
+    <div className={`battle-clock ${timeMs < 60000 ? 'clock-danger' : ''}`}>{formatClock(timeMs)}</div>
     <p>{player.rank?.name ?? '입문'}</p>
   </aside>;
+}
+
+function formatClock(ms: number) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+type ChatMessage = { id: number; sender_user_id: string; body: string; created_at: number };
+function BattleChat({ matchId, youId, opponentId }: { matchId: string; youId: string; opponentId: string }) {
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState('closed');
+  const [requestedByMe, setRequestedByMe] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [message, setMessage] = useState('');
+  const load = useCallback(async () => {
+    const response = await fetch(`/api/chat?matchId=${encodeURIComponent(matchId)}`, { cache: 'no-store' });
+    if (!response.ok) return;
+    const data = await response.json() as { status: string; requestedByMe: boolean; messages: ChatMessage[] };
+    setStatus(data.status); setRequestedByMe(data.requestedByMe); setMessages(data.messages);
+  }, [matchId]);
+  useEffect(() => {
+    if (!open) return;
+    const first = window.setTimeout(() => void load(), 0);
+    const timer = window.setInterval(() => void load(), 1500);
+    return () => { window.clearTimeout(first); window.clearInterval(timer); };
+  }, [open, load]);
+  async function act(action: string, body?: object) {
+    await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ matchId, action, ...body }) });
+    await load();
+  }
+  async function send(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!message.trim()) return;
+    await act('send', { message }); setMessage('');
+  }
+  async function block() {
+    if (!opponentId || !window.confirm('상대를 악당 목록에 등록하고 채팅을 차단할까요?')) return;
+    await fetch('/api/community', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'block', userId: opponentId }) });
+    setOpen(false);
+  }
+  return <div className={`battle-chat ${open ? 'chat-open' : ''}`}>
+    <button className="chat-toggle" onClick={() => setOpen(!open)} aria-label="채팅"><MessageCircle /><span>채팅</span></button>
+    {open && <section className="chat-panel"><header><strong>대국 채팅</strong><button onClick={() => void block()}><UserX /> 악당등록</button></header>
+      {status === 'closed' && <div className="chat-consent"><p>기본 채팅은 꺼져 있습니다. 상대에게 대화를 요청하시겠습니까?</p><button onClick={() => void act('request')}>채팅 요청</button></div>}
+      {status === 'pending' && requestedByMe && <div className="chat-consent"><p>상대의 수락을 기다리고 있습니다.</p></div>}
+      {status === 'pending' && !requestedByMe && <div className="chat-consent"><p>상대가 채팅을 요청했습니다.</p><div><button onClick={() => void act('accept')}>수락</button><button onClick={() => void act('reject')}>거절</button></div></div>}
+      {status === 'rejected' && <div className="chat-consent"><p>채팅 요청이 거절되었습니다.</p></div>}
+      {status === 'accepted' && <><div className="chat-messages">{messages.length ? messages.map((item) => <p className={item.sender_user_id === youId ? 'mine' : ''} key={item.id}>{item.body}</p>) : <span>채팅이 열렸습니다.</span>}</div><form onSubmit={send}><input value={message} onChange={(event) => setMessage(event.target.value)} maxLength={200} aria-label="채팅 메시지" placeholder="메시지 입력" /><button aria-label="전송"><Send /></button></form></>}
+    </section>}
+  </div>;
 }

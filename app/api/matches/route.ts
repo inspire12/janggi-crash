@@ -14,6 +14,9 @@ type MatchRow = {
   version: number;
   winner_user_id: string | null;
   result_reason: string | null;
+  cho_time_ms: number;
+  han_time_ms: number;
+  turn_started_at: number;
   created_at: number;
   updated_at: number;
 };
@@ -22,7 +25,8 @@ async function ownedMatch(matchId: string, userId: string) {
   return getDatabase()
     .prepare(
       `SELECT id, cho_user_id, han_user_id, status, turn, board_json, version,
-              winner_user_id, result_reason, created_at, updated_at
+              winner_user_id, result_reason, cho_time_ms, han_time_ms,
+              turn_started_at, created_at, updated_at
        FROM matches
        WHERE id = ? AND (cho_user_id = ? OR han_user_id = ?)`,
     )
@@ -51,6 +55,10 @@ export async function GET(request: Request) {
   if (!match) return Response.json({ error: '대국을 찾을 수 없습니다.' }, { status: 404 });
   const [cho, han] = await Promise.all([player(match.cho_user_id), player(match.han_user_id)]);
   const side: Side = match.cho_user_id === user.userId ? 'cho' : 'han';
+  const now = Date.now();
+  const elapsed = match.status === 'active' ? Math.max(0, now - match.turn_started_at) : 0;
+  const choTimeMs = Math.max(0, match.cho_time_ms - (match.turn === 'cho' ? elapsed : 0));
+  const hanTimeMs = Math.max(0, match.han_time_ms - (match.turn === 'han' ? elapsed : 0));
   const presentPlayer = (profile: PlayerProfile | null) => ({
     id: profile?.id,
     displayName: profile?.display_name ?? '지휘관',
@@ -71,6 +79,9 @@ export async function GET(request: Request) {
             ? 'han'
             : null,
       resultReason: match.result_reason,
+      choTimeMs,
+      hanTimeMs,
+      clockSyncedAt: now,
       updatedAt: match.updated_at,
     },
     you: { side, ...presentPlayer(side === 'cho' ? cho : han) },
@@ -121,12 +132,20 @@ export async function POST(request: Request) {
   const nextTurn: Side = side === 'cho' ? 'han' : 'cho';
   const checkmate = isCheckmate(nextTurn, next);
   const now = Date.now();
+  const elapsed = Math.max(0, now - match.turn_started_at);
+  const choTimeMs = Math.max(0, match.cho_time_ms - (side === 'cho' ? elapsed : 0));
+  const hanTimeMs = Math.max(0, match.han_time_ms - (side === 'han' ? elapsed : 0));
+  if ((side === 'cho' ? choTimeMs : hanTimeMs) === 0) {
+    await finishMatch(match, opponentId, user.userId, 'timeout');
+    return Response.json({ error: '제한시간이 종료되었습니다.' }, { status: 409 });
+  }
   const db = getDatabase();
   const update = db
     .prepare(
       `UPDATE matches
        SET board_json = ?, turn = ?, version = version + 1, updated_at = ?,
-           status = ?, winner_user_id = ?, result_reason = ?
+           status = ?, winner_user_id = ?, result_reason = ?,
+           cho_time_ms = ?, han_time_ms = ?, turn_started_at = ?
        WHERE id = ? AND version = ? AND status = 'active'`,
     )
     .bind(
@@ -136,6 +155,9 @@ export async function POST(request: Request) {
       checkmate ? 'finished' : 'active',
       checkmate ? user.userId : null,
       checkmate ? 'checkmate' : null,
+      choTimeMs,
+      hanTimeMs,
+      now,
       match.id,
       match.version,
     );

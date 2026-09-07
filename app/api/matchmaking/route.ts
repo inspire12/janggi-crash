@@ -83,10 +83,11 @@ export async function POST(request: Request) {
     db
       .prepare(
         `INSERT INTO matches
-         (id, cho_user_id, han_user_id, status, turn, board_json, version, created_at, updated_at)
-         VALUES (?, ?, ?, 'active', 'cho', ?, 0, ?, ?)`,
+         (id, cho_user_id, han_user_id, status, turn, board_json, version,
+          cho_time_ms, han_time_ms, turn_started_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'active', 'cho', ?, 0, 600000, 600000, ?, ?, ?)`,
       )
-      .bind(matchId, cho, han, JSON.stringify(initialPieces), now, now),
+      .bind(matchId, cho, han, JSON.stringify(initialPieces), now, now, now),
     db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(user.userId),
     db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(opponent.user_id),
   ]);

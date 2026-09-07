@@ -15,6 +15,13 @@
       "when": 1788772389877,
       "tag": "0001_dapper_squirrel_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788782001295,
+      "tag": "0002_goofy_green_goblin",
+      "breakpoints": true
     }
   ]
 }

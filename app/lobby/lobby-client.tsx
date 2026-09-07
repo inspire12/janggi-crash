@@ -70,7 +70,7 @@ export default function LobbyClient() {
         <div className="lobby-main">
           <TabsContent value="match"><MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} onQueue={changeQueue} /></TabsContent>
           <TabsContent value="review"><EmptyTab icon={History} eyebrow="GAME RECORDS" title="기보와 복기" text="완료한 대국의 수순을 다시 보고, 중요한 장면을 저장해 분석합니다." action="내 기보 보기" /></TabsContent>
-          <TabsContent value="friends"><EmptyTab icon={UserRoundPlus} eyebrow="FRIEND MATCH" title="친구와 한판" text="친구를 초대하거나 받은 초대를 확인하고 부담 없이 친선 대국을 시작합니다." action="친구 초대하기" /></TabsContent>
+          <TabsContent value="friends"><CommunityTab /></TabsContent>
           <TabsContent value="ai"><EmptyTab icon={Bot} eyebrow="TRAINING" title="컴퓨터와 두기" text="난이도와 진영을 선택하고 시간 제한 없이 새로운 수를 연습합니다." action="연습 대국 시작" href="/" /></TabsContent>
           <TabsContent value="shop"><EmptyTab icon={Gift} eyebrow="COLLECTION" title="상점과 이벤트" text="기물, 장기판, 포획 효과를 둘러보고 보유한 테마를 장착합니다." action="테마 둘러보기" /></TabsContent>
         </div>
@@ -114,4 +114,32 @@ function MatchTab({ profile, matchId, queued, busy, error, onQueue }: { profile:
 function EmptyTab({ icon: Icon, eyebrow, title, text, action, href }: { icon: typeof History; eyebrow: string; title: string; text: string; action: string; href?: string }) {
   const content = <><Icon size={21} />{action}</>;
   return <section className="feature-empty"><div className="feature-icon"><Icon size={36} /></div><span>{eyebrow}</span><h1>{title}</h1><p>{text}</p>{href ? <Link className="feature-action" href={href}>{content}</Link> : <button className="feature-action" disabled>{content}<small>준비 중</small></button>}</section>;
+}
+
+type Community = { guild: { id: string; name: string; role: string; member_count: number } | null; blocked: Array<{ id: string; display_name: string }> };
+function CommunityTab() {
+  const [data, setData] = useState<Community | null>(null);
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const load = useCallback(async () => {
+    const response = await fetch('/api/community', { cache: 'no-store' });
+    if (response.ok) setData(await response.json() as Community);
+  }, []);
+  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
+  async function createGuild(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault(); setError('');
+    const response = await fetch('/api/community', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'create-guild', name }) });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) return setError(result.error ?? '길드를 만들지 못했습니다.');
+    setName(''); await load();
+  }
+  async function unblock(userId: string) {
+    await fetch('/api/community', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'unblock', userId }) });
+    await load();
+  }
+  return <section className="community-tab">
+    <div className="lobby-greeting"><span><Users size={13} /> COMMUNITY</span><h1>길드와 친구</h1><p>함께할 동료를 모으고 친선 대국을 준비하세요.</p></div>
+    <div className="community-grid"><article><div className="community-icon"><Users /></div><span>MY GUILD</span>{data?.guild ? <><h2>{data.guild.name}</h2><p>{data.guild.member_count}명 · {data.guild.role === 'owner' ? '길드장' : '길드원'}</p><button disabled>길드 관리 <small>준비 중</small></button></> : <><h2>소속 길드 없음</h2><p>길드를 만들고 이후 친구 초대 기능을 이용할 수 있습니다.</p><form onSubmit={createGuild}><input value={name} onChange={(event) => setName(event.target.value)} minLength={2} maxLength={16} placeholder="길드명" aria-label="길드명" required /><button>길드 만들기</button></form>{error && <p className="form-error">{error}</p>}</>}</article>
+      <article><div className="community-icon villain"><UserRoundPlus /></div><span>BLOCK LIST</span><h2>악당 목록</h2>{data?.blocked.length ? <ul>{data.blocked.map((player) => <li key={player.id}><span>{player.display_name}</span><button onClick={() => void unblock(player.id)}>해제</button></li>)}</ul> : <p>등록된 악당이 없습니다. 대국 채팅에서 상대를 등록하면 메시지가 차단됩니다.</p>}</article></div>
+  </section>;
 }
