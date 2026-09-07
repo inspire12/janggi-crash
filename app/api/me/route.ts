@@ -11,6 +11,7 @@ export async function GET() {
   return Response.json({
     registered: true,
     id: profile.id,
+    email: profile.email,
     displayName: profile.display_name,
     elo: profile.elo,
     wins: profile.wins,
