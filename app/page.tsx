@@ -5,6 +5,7 @@ import { RotateCcw, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import {
   applyMove,
   initialPieces,
+  isCheckmate,
   isInCheck,
   legalMoves,
   type Piece,
@@ -46,6 +47,7 @@ export default function Home() {
   const [pieces, setPieces] = useState(initialPieces),
     [selected, setSelected] = useState<string | null>(null),
     [turn, setTurn] = useState<Side>('cho'),
+    [winner, setWinner] = useState<Side | null>(null),
     [cinema, setCinema] = useState(true),
     [sound, setSound] = useState(true),
     [impact, setImpact] = useState<{
@@ -85,6 +87,7 @@ export default function Home() {
             setPieces(initialPieces);
             setSelected(null);
             setTurn('cho');
+            setWinner(null);
             setImpact(null);
             setStatus('초의 기물을 선택하세요.');
             return { status: 'reset', turn: 'cho' };
@@ -96,6 +99,7 @@ export default function Home() {
     return () => lifecycle.abort();
   }, []);
   function choose(p: Piece) {
+    if (winner) return;
     if (p.side !== turn) {
       if (selectedPiece && targets.some((to) => to.x === p.x && to.y === p.y)) {
         move(p.x, p.y);
@@ -113,14 +117,24 @@ export default function Home() {
     );
   }
   function move(x: number, y: number) {
-    if (!selectedPiece || !targets.some((t) => t.x === x && t.y === y)) return;
+    if (
+      winner ||
+      !selectedPiece ||
+      !targets.some((t) => t.x === x && t.y === y)
+    )
+      return;
     const victim = pieces.find(
       (p) => p.x === x && p.y === y && p.side !== selectedPiece.side,
     );
     const nextPieces = applyMove(pieces, selectedPiece.id, { x, y });
     const nextTurn = turn === 'cho' ? 'han' : 'cho';
     setPieces(nextPieces);
-    if (victim) {
+    const checkmate = isCheckmate(nextTurn, nextPieces);
+    if (checkmate) {
+      setWinner(turn);
+      setImpact({ x, y, label: '외통!', tier: 6 });
+      setStatus(`외통 — ${turn === 'cho' ? '초' : '한'}의 승리!`);
+    } else if (victim) {
       const tier = impactTier(victim.kind);
       const score = PIECE_SCORE[victim.kind];
       setImpact({
@@ -150,6 +164,7 @@ export default function Home() {
     setPieces(initialPieces);
     setSelected(null);
     setTurn('cho');
+    setWinner(null);
     setImpact(null);
     setStatus('초의 기물을 선택하세요.');
   }
@@ -190,7 +205,11 @@ export default function Home() {
         <div className="arena">
           <div className="turn-indicator">
             <span className={turn} />
-            {turn === 'cho' ? '초의 차례' : '한의 차례'}
+            {winner
+              ? `${winner === 'cho' ? '초' : '한'}의 승리`
+              : turn === 'cho'
+                ? '초의 차례'
+                : '한의 차례'}
           </div>
           <div className="board-frame">
             <div
@@ -237,6 +256,13 @@ export default function Home() {
                 >
                   <i />
                   <b>{impact.label}</b>
+                </div>
+              )}
+              {winner && (
+                <div className={`mate-banner ${winner}`} role="status">
+                  <span>CHECKMATE</span>
+                  <strong>외통</strong>
+                  <b>{winner === 'cho' ? '초' : '한'} 승리</b>
                 </div>
               )}
             </div>

@@ -292,3 +292,13 @@ export function legalMoves(piece: Piece, pieces: Piece[]) {
     (to) => !isInCheck(piece.side, applyMove(pieces, piece.id, to)),
   );
 }
+
+export function hasLegalMove(side: Side, pieces: Piece[]) {
+  return pieces.some(
+    (piece) => piece.side === side && legalMoves(piece, pieces).length > 0,
+  );
+}
+
+export function isCheckmate(side: Side, pieces: Piece[]) {
+  return isInCheck(side, pieces) && !hasLegalMove(side, pieces);
+}
