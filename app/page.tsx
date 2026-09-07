@@ -2,6 +2,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { RotateCcw, Sparkles, Volume2, VolumeX } from 'lucide-react';
+import {
+  applyMove,
+  initialPieces,
+  isInCheck,
+  legalMoves,
+  type Piece,
+  type Side,
+} from '@/lib/janggi';
 declare global {
   interface Document {
     modelContext?: {
@@ -12,41 +20,9 @@ declare global {
     };
   }
 }
-type Side = 'cho' | 'han';
-type Piece = {
-  id: string;
-  label: string;
-  side: Side;
-  x: number;
-  y: number;
-  kind: string;
-};
-const opening: Piece[] = [
-  { id: 'hk', label: '漢', side: 'han', x: 4, y: 1, kind: '궁' },
-  { id: 'hr1', label: '車', side: 'han', x: 0, y: 0, kind: '차' },
-  { id: 'hr2', label: '車', side: 'han', x: 8, y: 0, kind: '차' },
-  { id: 'hc1', label: '包', side: 'han', x: 1, y: 2, kind: '포' },
-  { id: 'hc2', label: '包', side: 'han', x: 7, y: 2, kind: '포' },
-  { id: 'hs1', label: '卒', side: 'han', x: 0, y: 3, kind: '졸' },
-  { id: 'hs2', label: '卒', side: 'han', x: 2, y: 3, kind: '졸' },
-  { id: 'hs3', label: '卒', side: 'han', x: 4, y: 3, kind: '졸' },
-  { id: 'hs4', label: '卒', side: 'han', x: 6, y: 3, kind: '졸' },
-  { id: 'hs5', label: '卒', side: 'han', x: 8, y: 3, kind: '졸' },
-  { id: 'ck', label: '楚', side: 'cho', x: 4, y: 8, kind: '궁' },
-  { id: 'cr1', label: '車', side: 'cho', x: 0, y: 9, kind: '차' },
-  { id: 'cr2', label: '車', side: 'cho', x: 8, y: 9, kind: '차' },
-  { id: 'cc1', label: '炮', side: 'cho', x: 1, y: 7, kind: '포' },
-  { id: 'cc2', label: '炮', side: 'cho', x: 4, y: 5, kind: '포' },
-  { id: 'cs1', label: '兵', side: 'cho', x: 0, y: 6, kind: '병' },
-  { id: 'cs2', label: '兵', side: 'cho', x: 2, y: 6, kind: '병' },
-  { id: 'cs3', label: '兵', side: 'cho', x: 4, y: 6, kind: '병' },
-  { id: 'cs4', label: '兵', side: 'cho', x: 6, y: 6, kind: '병' },
-  { id: 'cs5', label: '兵', side: 'cho', x: 8, y: 6, kind: '병' },
-];
-
 export default function Home() {
-  const [pieces, setPieces] = useState(opening),
-    [selected, setSelected] = useState<string | null>('cc2'),
+  const [pieces, setPieces] = useState(initialPieces),
+    [selected, setSelected] = useState<string | null>(null),
     [turn, setTurn] = useState<Side>('cho'),
     [cinema, setCinema] = useState(true),
     [sound, setSound] = useState(true),
@@ -55,27 +31,12 @@ export default function Home() {
       y: number;
       label: string;
     } | null>(null),
-    [status, setStatus] = useState(
-      '포를 선택했습니다. 빛나는 지점을 눌러보세요.',
-    );
+    [status, setStatus] = useState('초의 기물을 선택하세요.');
   const selectedPiece = pieces.find((p) => p.id === selected);
-  const targets = useMemo(() => {
-    if (!selectedPiece) return [];
-    if (selectedPiece.id === 'cc2')
-      return [
-        { x: 4, y: 3 },
-        { x: 4, y: 2 },
-        { x: 4, y: 1 },
-      ];
-    return [
-      [0, -1],
-      [0, 1],
-      [-1, 0],
-      [1, 0],
-    ]
-      .map(([dx, dy]) => ({ x: selectedPiece.x + dx, y: selectedPiece.y + dy }))
-      .filter(({ x, y }) => x >= 0 && x <= 8 && y >= 0 && y <= 9);
-  }, [selectedPiece]);
+  const targets = useMemo(
+    () => (selectedPiece ? legalMoves(selectedPiece, pieces) : []),
+    [selectedPiece, pieces],
+  );
   useEffect(() => {
     if (!impact) return;
     const t = window.setTimeout(() => setImpact(null), 900);
@@ -98,11 +59,11 @@ export default function Home() {
           },
           annotations: { readOnlyHint: false, untrustedContentHint: false },
           execute() {
-            setPieces(opening);
-            setSelected('cc2');
+            setPieces(initialPieces);
+            setSelected(null);
             setTurn('cho');
             setImpact(null);
-            setStatus('포를 선택했습니다. 빛나는 지점을 눌러보세요.');
+            setStatus('초의 기물을 선택하세요.');
             return { status: 'reset', turn: 'cho' };
           },
         },
@@ -112,37 +73,52 @@ export default function Home() {
     return () => lifecycle.abort();
   }, []);
   function choose(p: Piece) {
-    if (p.side !== turn) return;
+    if (p.side !== turn) {
+      if (selectedPiece && targets.some((to) => to.x === p.x && to.y === p.y)) {
+        move(p.x, p.y);
+      }
+      return;
+    }
+    if (selected === p.id) {
+      setSelected(null);
+      setStatus(`${turn === 'cho' ? '초' : '한'}의 기물을 선택하세요.`);
+      return;
+    }
     setSelected(p.id);
-    setStatus(`${p.kind} 선택 — 이동할 교차점을 고르세요.`);
+    setStatus(
+      `${p.name} 선택 — 이동 가능한 자리 ${legalMoves(p, pieces).length}곳`,
+    );
   }
   function move(x: number, y: number) {
     if (!selectedPiece || !targets.some((t) => t.x === x && t.y === y)) return;
     const victim = pieces.find(
       (p) => p.x === x && p.y === y && p.side !== selectedPiece.side,
     );
-    setPieces((c) =>
-      c
-        .filter((p) => !victim || p.id !== victim.id)
-        .map((p) => (p.id === selectedPiece.id ? { ...p, x, y } : p)),
-    );
+    const nextPieces = applyMove(pieces, selectedPiece.id, { x, y });
+    const nextTurn = turn === 'cho' ? 'han' : 'cho';
+    setPieces(nextPieces);
     if (victim) {
-      setImpact({ x, y, label: victim.kind === '궁' ? '장군!' : '격파' });
+      setImpact({ x, y, label: victim.kind === 'king' ? '승리!' : '격파' });
       setStatus(
-        victim.kind === '궁'
-          ? '장군! 궁성이 흔들립니다.'
-          : `${selectedPiece.kind}로 ${victim.kind}을 잡았습니다.`,
+        victim.kind === 'king'
+          ? `${turn === 'cho' ? '초' : '한'}의 승리!`
+          : `${selectedPiece.name}(으)로 ${victim.name}을 잡았습니다.`,
       );
-    } else setStatus(`${selectedPiece.kind} 이동 완료.`);
+    } else if (isInCheck(nextTurn, nextPieces)) {
+      setImpact({ x, y, label: '장군!' });
+      setStatus(
+        `장군! ${nextTurn === 'cho' ? '초' : '한'}의 궁이 공격받고 있습니다.`,
+      );
+    } else setStatus(`${selectedPiece.name} 이동 완료.`);
     setSelected(null);
-    setTurn(turn === 'cho' ? 'han' : 'cho');
+    setTurn(nextTurn);
   }
   function reset() {
-    setPieces(opening);
-    setSelected('cc2');
+    setPieces(initialPieces);
+    setSelected(null);
     setTurn('cho');
     setImpact(null);
-    setStatus('포를 선택했습니다. 빛나는 지점을 눌러보세요.');
+    setStatus('초의 기물을 선택하세요.');
   }
   return (
     <main className={`game-shell ${impact && cinema ? 'screen-impact' : ''}`}>
@@ -204,14 +180,14 @@ export default function Home() {
                   key={p.id}
                   onClick={() => choose(p)}
                   className={`piece ${p.side} ${
-                    ['졸', '병', '사'].includes(p.kind)
+                    ['pawn', 'guard'].includes(p.kind)
                       ? 'piece-small'
-                      : p.kind === '궁'
+                      : p.kind === 'king'
                         ? 'piece-king'
                         : 'piece-medium'
                   } ${selected === p.id ? 'selected' : ''}`}
                   style={{ left: `${p.x * 12.5}%`, top: `${p.y * (100 / 9)}%` }}
-                  aria-label={`${p.side === 'cho' ? '초' : '한'} ${p.kind}`}
+                  aria-label={`${p.side === 'cho' ? '초' : '한'} ${p.name}`}
                 >
                   <span>{p.label}</span>
                 </button>
@@ -243,10 +219,10 @@ export default function Home() {
           연출 강도 <b>{cinema ? '시네마틱' : '절제'}</b>
         </span>
         <span className="hint">
-          <Sparkles size={14} /> 포로 중앙의 졸을 잡아보세요
+          <Sparkles size={14} /> 기물을 선택하면 실제 행마가 표시됩니다
         </span>
         <span>
-          포획 <b>{20 - pieces.length}</b>
+          포획 <b>{32 - pieces.length}</b>
         </span>
       </footer>
     </main>
