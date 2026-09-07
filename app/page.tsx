@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { RotateCcw, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import {
   applyMove,
@@ -48,6 +48,9 @@ export default function Home() {
     [selected, setSelected] = useState<string | null>(null),
     [turn, setTurn] = useState<Side>('cho'),
     [winner, setWinner] = useState<Side | null>(null),
+    [motion, setMotion] = useState<{ id: string; capture: boolean } | null>(
+      null,
+    ),
     [cinema, setCinema] = useState(true),
     [sound, setSound] = useState(true),
     [impact, setImpact] = useState<{
@@ -57,6 +60,7 @@ export default function Home() {
       tier: number;
     } | null>(null),
     [status, setStatus] = useState('초의 기물을 선택하세요.');
+  const motionSequence = useRef(0);
   const selectedPiece = pieces.find((p) => p.id === selected);
   const targets = useMemo(
     () => (selectedPiece ? legalMoves(selectedPiece, pieces) : []),
@@ -84,11 +88,13 @@ export default function Home() {
           },
           annotations: { readOnlyHint: false, untrustedContentHint: false },
           execute() {
+            motionSequence.current += 1;
             setPieces(initialPieces);
             setSelected(null);
             setTurn('cho');
             setWinner(null);
             setImpact(null);
+            setMotion(null);
             setStatus('초의 기물을 선택하세요.');
             return { status: 'reset', turn: 'cho' };
           },
@@ -99,7 +105,7 @@ export default function Home() {
     return () => lifecycle.abort();
   }, []);
   function choose(p: Piece) {
-    if (winner) return;
+    if (winner || motion) return;
     if (p.side !== turn) {
       if (selectedPiece && targets.some((to) => to.x === p.x && to.y === p.y)) {
         move(p.x, p.y);
@@ -119,6 +125,7 @@ export default function Home() {
   function move(x: number, y: number) {
     if (
       winner ||
+      motion ||
       !selectedPiece ||
       !targets.some((t) => t.x === x && t.y === y)
     )
@@ -128,44 +135,67 @@ export default function Home() {
     );
     const nextPieces = applyMove(pieces, selectedPiece.id, { x, y });
     const nextTurn = turn === 'cho' ? 'han' : 'cho';
-    setPieces(nextPieces);
     const checkmate = isCheckmate(nextTurn, nextPieces);
-    if (checkmate) {
-      setWinner(turn);
-      setImpact({ x, y, label: '외통!', tier: 6 });
-      setStatus(`외통 — ${turn === 'cho' ? '초' : '한'}의 승리!`);
-    } else if (victim) {
-      const tier = impactTier(victim.kind);
-      const score = PIECE_SCORE[victim.kind];
-      setImpact({
-        x,
-        y,
-        label:
-          victim.kind === 'king'
-            ? '승리!'
-            : `+${score} ${tier >= 4 ? '대격파' : '격파'}`,
-        tier,
-      });
-      setStatus(
-        victim.kind === 'king'
-          ? `${turn === 'cho' ? '초' : '한'}의 승리!`
-          : `${selectedPiece.name}(으)로 ${victim.name}을 잡았습니다. +${score}점`,
-      );
-    } else if (isInCheck(nextTurn, nextPieces)) {
-      setImpact({ x, y, label: '장군!', tier: 4 });
-      setStatus(
-        `장군! ${nextTurn === 'cho' ? '초' : '한'}의 궁이 공격받고 있습니다.`,
-      );
-    } else setStatus(`${selectedPiece.name} 이동 완료.`);
-    setSelected(null);
-    setTurn(nextTurn);
+    const movingId = selectedPiece.id;
+    const sequence = ++motionSequence.current;
+    const travelPieces = victim
+      ? pieces.map((piece) =>
+          piece.id === movingId ? { ...piece, x, y } : piece,
+        )
+      : nextPieces;
+    setMotion({ id: movingId, capture: Boolean(victim) });
+    setStatus(
+      victim
+        ? `${selectedPiece.name} 공격 — ${victim?.name}을 향해 돌진합니다.`
+        : `${selectedPiece.name} 이동 중…`,
+    );
+    requestAnimationFrame(() => setPieces(travelPieces));
+    window.setTimeout(
+      () => {
+        if (motionSequence.current !== sequence) return;
+        setPieces(nextPieces);
+        if (checkmate) {
+          setWinner(turn);
+          setImpact({ x, y, label: '외통!', tier: 6 });
+          setStatus(`외통 — ${turn === 'cho' ? '초' : '한'}의 승리!`);
+        } else if (victim) {
+          const tier = impactTier(victim.kind);
+          const score = PIECE_SCORE[victim.kind];
+          setImpact({
+            x,
+            y,
+            label:
+              victim.kind === 'king'
+                ? '승리!'
+                : `+${score} ${tier >= 4 ? '대격파' : '격파'}`,
+            tier,
+          });
+          setStatus(
+            victim.kind === 'king'
+              ? `${turn === 'cho' ? '초' : '한'}의 승리!`
+              : `${selectedPiece.name}(으)로 ${victim.name}을 잡았습니다. +${score}점`,
+          );
+        } else if (isInCheck(nextTurn, nextPieces)) {
+          setImpact({ x, y, label: '장군!', tier: 4 });
+          setStatus(
+            `장군! ${nextTurn === 'cho' ? '초' : '한'}의 궁이 공격받고 있습니다.`,
+          );
+        } else setStatus(`${selectedPiece.name} 이동 완료.`);
+        setSelected(null);
+        setTurn(nextTurn);
+        setMotion(null);
+      },
+      victim ? 460 : 300,
+    );
   }
   function reset() {
+    motionSequence.current += 1;
     setPieces(initialPieces);
     setSelected(null);
     setTurn('cho');
     setWinner(null);
     setImpact(null);
+    setMotion(null);
     setStatus('초의 기물을 선택하세요.');
   }
   return (
@@ -239,7 +269,13 @@ export default function Home() {
                       : p.kind === 'king'
                         ? 'piece-king'
                         : 'piece-medium'
-                  } ${selected === p.id ? 'selected' : ''}`}
+                  } ${selected === p.id ? 'selected' : ''} ${
+                    motion?.id === p.id
+                      ? motion.capture
+                        ? 'moving capturing'
+                        : 'moving'
+                      : ''
+                  }`}
                   style={{ left: `${p.x * 12.5}%`, top: `${p.y * (100 / 9)}%` }}
                   aria-label={`${p.side === 'cho' ? '초' : '한'} ${p.name}`}
                 >

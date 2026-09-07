@@ -321,6 +321,25 @@ button {
     0 0 28px #2d99ddcc,
     0 8px 12px #1b0f0799;
 }
+.piece.moving {
+  z-index: 9;
+  pointer-events: none;
+  animation: none;
+}
+.piece.capturing {
+  filter: brightness(1.22) saturate(1.25);
+  transform: translate(-50%, -50%) scale(1.09);
+  box-shadow:
+    0 0 0 4px #fff0ae38,
+    0 0 32px currentColor,
+    -9px 8px 20px #0a0b0ab3,
+    inset 0 0 0 3px #fff4ca8c;
+  transition:
+    left 0.46s cubic-bezier(0.72, 0, 0.98, 0.4),
+    top 0.46s cubic-bezier(0.72, 0, 0.98, 0.4),
+    filter 0.16s,
+    transform 0.46s cubic-bezier(0.72, 0, 0.98, 0.4);
+}
 .move-target {
   width: 22px;
   height: 22px;
