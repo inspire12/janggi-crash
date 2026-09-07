@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCcw, Sparkles, Volume2, VolumeX } from 'lucide-react';
+import { RotateCcw, Sparkles, Swords, Volume2, VolumeX } from 'lucide-react';
+import Link from 'next/link';
 import {
   applyMove,
   initialPieces,
@@ -211,6 +212,9 @@ export default function Home() {
           <em>PROTOTYPE 01</em>
         </div>
         <div className="header-actions">
+          <Link className="text-btn online-link" href="/lobby">
+            <Swords size={15} /> 온라인 대전
+          </Link>
           <button
             className={`icon-btn ${cinema ? 'active' : ''}`}
             onClick={() => setCinema(!cinema)}
