@@ -338,6 +338,9 @@ button {
   transform: translate(-50%, -50%) scale(1.2);
 }
 .impact {
+  --impact-ring-scale: 4;
+  --impact-word-size: clamp(24px, 4vw, 46px);
+  --impact-ring-width: 2px;
   width: 1px;
   height: 1px;
   z-index: 9;
@@ -349,7 +352,7 @@ button {
   position: absolute;
   content: '';
   display: block;
-  border: 3px solid #fff0ae;
+  border: var(--impact-ring-width) solid #fff0ae;
   border-radius: 50%;
   inset: -20px;
   animation: shock 0.7s ease-out forwards;
@@ -368,7 +371,7 @@ button {
   top: 50%;
   transform: translate(-50%, -50%) rotate(-7deg);
   font:
-    900 clamp(28px, 5vw, 55px) Georgia,
+    900 var(--impact-word-size) Georgia,
     serif;
   color: #fff3ce;
   text-shadow:
@@ -376,6 +379,35 @@ button {
     0 0 25px #ff3222;
   white-space: nowrap;
   animation: impactWord 0.8s ease-out forwards;
+}
+.impact-tier-1 {
+  --impact-ring-scale: 2.1;
+  --impact-word-size: clamp(17px, 2.3vw, 25px);
+  --impact-ring-width: 1px;
+}
+.impact-tier-2 {
+  --impact-ring-scale: 2.8;
+  --impact-word-size: clamp(20px, 2.8vw, 31px);
+  --impact-ring-width: 1.5px;
+}
+.impact-tier-3 {
+  --impact-ring-scale: 3.5;
+  --impact-word-size: clamp(23px, 3.4vw, 38px);
+}
+.impact-tier-4 {
+  --impact-ring-scale: 4.3;
+  --impact-word-size: clamp(27px, 4.2vw, 48px);
+  --impact-ring-width: 3px;
+}
+.impact-tier-5 {
+  --impact-ring-scale: 5.3;
+  --impact-word-size: clamp(32px, 5vw, 58px);
+  --impact-ring-width: 4px;
+}
+.impact-tier-6 {
+  --impact-ring-scale: 6.4;
+  --impact-word-size: clamp(38px, 6vw, 70px);
+  --impact-ring-width: 5px;
 }
 .status-strip {
   width: 100%;
@@ -504,7 +536,33 @@ footer b {
   color: #9da39f;
 }
 .screen-impact {
+  --shake: 4px;
+  --flash: 0.22;
   animation: screenShake 0.32s linear;
+}
+.impact-screen-1 {
+  --shake: 1px;
+  --flash: 0.04;
+}
+.impact-screen-2 {
+  --shake: 2px;
+  --flash: 0.08;
+}
+.impact-screen-3 {
+  --shake: 4px;
+  --flash: 0.16;
+}
+.impact-screen-4 {
+  --shake: 7px;
+  --flash: 0.28;
+}
+.impact-screen-5 {
+  --shake: 11px;
+  --flash: 0.42;
+}
+.impact-screen-6 {
+  --shake: 15px;
+  --flash: 0.58;
 }
 .screen-impact:after {
   content: '';
@@ -536,7 +594,7 @@ footer b {
     opacity: 1;
   }
   100% {
-    transform: scale(4);
+    transform: scale(var(--impact-ring-scale));
     opacity: 0;
   }
 }
@@ -559,21 +617,21 @@ footer b {
 }
 @keyframes screenShake {
   20% {
-    transform: translate(7px, -3px);
+    transform: translate(var(--shake), calc(var(--shake) * -0.45));
   }
   40% {
-    transform: translate(-6px, 4px);
+    transform: translate(calc(var(--shake) * -0.85), calc(var(--shake) * 0.55));
   }
   60% {
-    transform: translate(4px, 2px);
+    transform: translate(calc(var(--shake) * 0.6), calc(var(--shake) * 0.3));
   }
   80% {
-    transform: translate(-2px, -2px);
+    transform: translate(calc(var(--shake) * -0.3), calc(var(--shake) * -0.3));
   }
 }
 @keyframes flash {
   0% {
-    opacity: 0.5;
+    opacity: var(--flash);
   }
   100% {
     opacity: 0;

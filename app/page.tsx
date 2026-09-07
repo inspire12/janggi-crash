@@ -9,7 +9,29 @@ import {
   legalMoves,
   type Piece,
   type Side,
+  type Kind,
 } from '@/lib/janggi';
+const PIECE_SCORE: Record<Kind, number> = {
+  king: 0,
+  rook: 13,
+  cannon: 7,
+  horse: 5,
+  elephant: 3,
+  guard: 3,
+  pawn: 2,
+};
+const impactTier = (kind: Kind) =>
+  kind === 'king'
+    ? 6
+    : kind === 'rook'
+      ? 5
+      : kind === 'cannon'
+        ? 4
+        : kind === 'horse'
+          ? 3
+          : kind === 'elephant' || kind === 'guard'
+            ? 2
+            : 1;
 declare global {
   interface Document {
     modelContext?: {
@@ -30,6 +52,7 @@ export default function Home() {
       x: number;
       y: number;
       label: string;
+      tier: number;
     } | null>(null),
     [status, setStatus] = useState('초의 기물을 선택하세요.');
   const selectedPiece = pieces.find((p) => p.id === selected);
@@ -98,14 +121,24 @@ export default function Home() {
     const nextTurn = turn === 'cho' ? 'han' : 'cho';
     setPieces(nextPieces);
     if (victim) {
-      setImpact({ x, y, label: victim.kind === 'king' ? '승리!' : '격파' });
+      const tier = impactTier(victim.kind);
+      const score = PIECE_SCORE[victim.kind];
+      setImpact({
+        x,
+        y,
+        label:
+          victim.kind === 'king'
+            ? '승리!'
+            : `+${score} ${tier >= 4 ? '대격파' : '격파'}`,
+        tier,
+      });
       setStatus(
         victim.kind === 'king'
           ? `${turn === 'cho' ? '초' : '한'}의 승리!`
-          : `${selectedPiece.name}(으)로 ${victim.name}을 잡았습니다.`,
+          : `${selectedPiece.name}(으)로 ${victim.name}을 잡았습니다. +${score}점`,
       );
     } else if (isInCheck(nextTurn, nextPieces)) {
-      setImpact({ x, y, label: '장군!' });
+      setImpact({ x, y, label: '장군!', tier: 4 });
       setStatus(
         `장군! ${nextTurn === 'cho' ? '초' : '한'}의 궁이 공격받고 있습니다.`,
       );
@@ -121,7 +154,9 @@ export default function Home() {
     setStatus('초의 기물을 선택하세요.');
   }
   return (
-    <main className={`game-shell ${impact && cinema ? 'screen-impact' : ''}`}>
+    <main
+      className={`game-shell ${impact && cinema ? `screen-impact impact-screen-${impact.tier}` : ''}`}
+    >
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">
@@ -194,7 +229,7 @@ export default function Home() {
               ))}
               {impact && (
                 <div
-                  className="impact"
+                  className={`impact impact-tier-${impact.tier}`}
                   style={{
                     left: `${impact.x * 12.5}%`,
                     top: `${impact.y * (100 / 9)}%`,
