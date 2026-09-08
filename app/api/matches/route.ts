@@ -3,6 +3,7 @@ import { getDatabase } from '@/db';
 import { getPlayer, type PlayerProfile } from '@/db/players';
 import { applyMove, isCheckmate, legalMoves, type Piece, type Side } from '@/lib/janggi';
 import { eloChange, rankForElo } from '@/lib/rating';
+import { publishMatchEvent } from '@/lib/supabase-events';
 
 type MatchRow = {
   id: string;
@@ -121,7 +122,8 @@ export async function POST(request: Request) {
   const side: Side = match.cho_user_id === user.userId ? 'cho' : 'han';
   const opponentId = side === 'cho' ? match.han_user_id : match.cho_user_id;
   if (body.action === 'resign') {
-    await finishMatch(match, opponentId, user.userId, 'resign');
+    const finished = await finishMatch(match, opponentId, user.userId, 'resign');
+    if (finished) await publishMatchEvent(match.id, match.version + 1, 'resign');
     return Response.json({ ok: true, finished: true });
   }
   if (body.action === 'takeback-request') {
@@ -141,6 +143,7 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
+    await publishMatchEvent(match.id, match.version, 'takeback-request');
     return Response.json({ ok: true });
   }
   if (body.action === 'takeback-reject') {
@@ -149,6 +152,7 @@ export async function POST(request: Request) {
       'UPDATE matches SET takeback_requested_by = NULL, updated_at = ? WHERE id = ? AND takeback_requested_by = ?',
     ).bind(Date.now(), match.id, match.takeback_requested_by).run();
     if (result.meta.changes !== 1) return Response.json({ error: '무르기 요청 상태가 변경되었습니다.' }, { status: 409 });
+    await publishMatchEvent(match.id, match.version, 'takeback-reject');
     return Response.json({ ok: true });
   }
   if (body.action === 'takeback-accept') {
@@ -165,6 +169,7 @@ export async function POST(request: Request) {
        WHERE id = ? AND version = ? AND takeback_requested_by = ?`,
     ).bind(now, now, match.id, match.version, match.takeback_requested_by).run();
     if (result.meta.changes !== 1) return Response.json({ error: '대국 상태가 변경되었습니다.' }, { status: 409 });
+    await publishMatchEvent(match.id, match.version + 1, 'takeback-accept');
     return Response.json({ ok: true });
   }
   if (
@@ -191,7 +196,8 @@ export async function POST(request: Request) {
   const choTimeMs = Math.max(0, match.cho_time_ms - (side === 'cho' ? elapsed : 0));
   const hanTimeMs = Math.max(0, match.han_time_ms - (side === 'han' ? elapsed : 0));
   if ((side === 'cho' ? choTimeMs : hanTimeMs) === 0) {
-    await finishMatch(match, opponentId, user.userId, 'timeout');
+    const finished = await finishMatch(match, opponentId, user.userId, 'timeout');
+    if (finished) await publishMatchEvent(match.id, match.version + 1, 'timeout');
     return Response.json({ error: '제한시간이 종료되었습니다.' }, { status: 409 });
   }
   const db = getDatabase();
@@ -235,6 +241,7 @@ export async function POST(request: Request) {
     return Response.json({ error: '상대 수가 먼저 반영되었습니다. 새로고침합니다.' }, { status: 409 });
   }
   if (checkmate) await db.batch(await ratingStatements(user.userId, opponentId));
+  await publishMatchEvent(match.id, match.version + 1, checkmate ? 'checkmate' : 'move');
   return Response.json({ ok: true, checkmate, version: match.version + 1 });
 }
 
@@ -249,6 +256,7 @@ async function finishMatch(match: MatchRow, winnerId: string, loserId: string, r
       .bind(winnerId, reason, Date.now(), match.id)
       .run();
   if (result.meta.changes === 1) await db.batch(await ratingStatements(winnerId, loserId));
+  return result.meta.changes === 1;
 }
 
 async function ratingStatements(winnerId: string, loserId: string) {

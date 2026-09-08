@@ -2,9 +2,10 @@
 
 ## Current production
 
-The deployed Sites application continues to use Cloudflare D1 and ChatGPT sign-in.
-The Supabase directory is a parallel foundation for a later, controlled cutover; no
-production request is routed to Supabase yet.
+The deployed Sites application uses Cloudflare D1 and ChatGPT sign-in as its source
+of truth. Supabase Realtime carries opaque match-update signals; clients respond by
+fetching the latest authorized state from the Sites API. No board, move, account, or
+chat content is exposed through the public Realtime subscription.
 
 ## Continuous integration
 

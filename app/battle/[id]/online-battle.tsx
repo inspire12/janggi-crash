@@ -5,6 +5,7 @@ import JanggiBoardMarks from '@/components/janggi-board-marks';
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { ArrowLeft, Flag, FlaskConical, MessageCircle, Radio, Send, Shield, Undo2, UserX } from 'lucide-react';
 import { applyMove, isInCheck, legalMoves, type Piece, pieceLabel, type Point, type Side } from '@/lib/janggi';
+import { createClient, type RealtimeChannel } from '@supabase/supabase-js';
 
 type Player = { id?: string; side?: Side; displayName?: string; elo?: number; rank?: { name: string; key: string } };
 type Payload = {
@@ -35,12 +36,37 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
       () => void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : '연결에 실패했습니다.')),
       0,
     );
-    const timer = window.setInterval(() => void refresh().catch(() => {}), 1000);
+    const timer = window.setInterval(() => void refresh().catch(() => {}), 5000);
     return () => {
       window.clearTimeout(first);
       window.clearInterval(timer);
     };
   }, [refresh]);
+  useEffect(() => {
+    let channel: RealtimeChannel | null = null;
+    let cancelled = false;
+    void fetch('/api/realtime-config', { cache: 'no-store' })
+      .then(async (response) => response.ok ? response.json() as Promise<{ enabled: boolean; url?: string; anonKey?: string }> : null)
+      .then((config) => {
+        if (cancelled || !config?.enabled || !config.url || !config.anonKey) return;
+        const client = createClient(config.url, config.anonKey, {
+          auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        });
+        channel = client
+          .channel(`match:${matchId}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'match_events', filter: `match_id=eq.${matchId}` },
+            () => void refresh().catch(() => {}),
+          )
+          .subscribe();
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (channel) void channel.unsubscribe();
+    };
+  }, [matchId, refresh]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timer);
