@@ -14,6 +14,7 @@ create table public.players (
   losses integer not null default 0 check (losses >= 0),
   draws integer not null default 0 check (draws >= 0),
   streak integer not null default 0,
+  allow_takeback_requests boolean not null default true,
   terms_accepted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -139,4 +140,3 @@ alter publication supabase_realtime add table public.matches;
 alter publication supabase_realtime add table public.moves;
 alter publication supabase_realtime add table public.match_chats;
 alter publication supabase_realtime add table public.chat_messages;
-

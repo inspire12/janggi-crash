@@ -382,6 +382,15 @@ a {
 .sheet-record div { display: grid; gap: 4px; text-align: center; }
 .sheet-record strong { font: 700 17px Georgia, serif; }
 .sheet-record span { color: #737a76; font-size: 11px; }
+.sheet-preferences { margin: 0 20px; padding: 16px 0; border-bottom: 1px solid #ffffff10; }
+.sheet-preferences > div { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: center; }
+.sheet-preferences svg { width: 18px; color: #7d8781; }
+.sheet-preferences span { display: grid; gap: 3px; }
+.sheet-preferences strong { color: #c2c8c3; font-size: 13px; }
+.sheet-preferences small { color: #737a76; font-size: 11px; line-height: 1.4; }
+.sheet-preferences p { margin: 8px 0 0 32px; color: #d36b5f; font-size: 11px; }
+.sheet-preferences [data-slot='switch'] { background: #cfd8e4; }
+.sheet-preferences [data-slot='switch'][data-checked] { background: var(--lobby-blue); }
 .sheet-menu { display: grid; padding: 14px 10px; }
 .sheet-menu button { height: 50px; border: 0; background: transparent; color: #b8bdb9; display: grid; grid-template-columns: 22px 1fr 16px; gap: 10px; align-items: center; text-align: left; cursor: pointer; }
 .sheet-menu button:hover { background: #ffffff08; color: #fff; }

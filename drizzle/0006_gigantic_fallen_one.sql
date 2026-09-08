@@ -1,0 +1,1 @@
+ALTER TABLE `players` ADD `allow_takeback_requests` integer DEFAULT 1 NOT NULL;

@@ -44,7 +44,8 @@ async function ownedMatch(matchId: string, userId: string) {
 async function player(id: string) {
   return getDatabase()
     .prepare(
-      `SELECT id, email, display_name, elo, wins, losses, draws, streak
+      `SELECT id, email, display_name, elo, wins, losses, draws, streak,
+              allow_takeback_requests, terms_accepted_at
        FROM players WHERE id = ?`,
     )
     .bind(id)
@@ -93,6 +94,7 @@ export async function GET(request: Request) {
       canTakeback: Boolean(match.previous_board_json),
       takebackRequested: Boolean(match.takeback_requested_by),
       takebackRequestedByMe: match.takeback_requested_by === user.userId,
+      opponentAllowsTakeback: (side === 'cho' ? han : cho)?.allow_takeback_requests === 1,
     },
     you: { side, ...presentPlayer(side === 'cho' ? cho : han) },
     opponent: presentPlayer(side === 'cho' ? han : cho),
@@ -126,14 +128,27 @@ export async function POST(request: Request) {
     if (!match.previous_board_json) return Response.json({ error: '무를 수 있는 수가 없습니다.' }, { status: 409 });
     const result = await getDatabase().prepare(
       `UPDATE matches SET takeback_requested_by = ?, updated_at = ?
-       WHERE id = ? AND status = 'active' AND takeback_requested_by IS NULL`,
-    ).bind(user.userId, Date.now(), match.id).run();
-    if (result.meta.changes !== 1) return Response.json({ error: '이미 무르기 요청이 진행 중입니다.' }, { status: 409 });
+       WHERE id = ? AND status = 'active' AND takeback_requested_by IS NULL
+         AND EXISTS (
+           SELECT 1 FROM players
+           WHERE id = ? AND allow_takeback_requests = 1
+         )`,
+    ).bind(user.userId, Date.now(), match.id, opponentId).run();
+    if (result.meta.changes !== 1) {
+      const opponent = await getPlayer(opponentId);
+      return Response.json(
+        { error: opponent?.allow_takeback_requests === 0 ? '상대가 무르기 요청을 받지 않도록 설정했습니다.' : '이미 무르기 요청이 진행 중입니다.' },
+        { status: 409 },
+      );
+    }
     return Response.json({ ok: true });
   }
   if (body.action === 'takeback-reject') {
     if (!match.takeback_requested_by || match.takeback_requested_by === user.userId) return Response.json({ error: '응답할 무르기 요청이 없습니다.' }, { status: 409 });
-    await getDatabase().prepare('UPDATE matches SET takeback_requested_by = NULL, updated_at = ? WHERE id = ?').bind(Date.now(), match.id).run();
+    const result = await getDatabase().prepare(
+      'UPDATE matches SET takeback_requested_by = NULL, updated_at = ? WHERE id = ? AND takeback_requested_by = ?',
+    ).bind(Date.now(), match.id, match.takeback_requested_by).run();
+    if (result.meta.changes !== 1) return Response.json({ error: '무르기 요청 상태가 변경되었습니다.' }, { status: 409 });
     return Response.json({ ok: true });
   }
   if (body.action === 'takeback-accept') {
@@ -146,8 +161,9 @@ export async function POST(request: Request) {
        previous_board_json = NULL, previous_turn = NULL,
        previous_cho_time_ms = NULL, previous_han_time_ms = NULL,
        takeback_requested_by = NULL, version = version + 1,
-       turn_started_at = ?, updated_at = ? WHERE id = ? AND version = ?`,
-    ).bind(now, now, match.id, match.version).run();
+       turn_started_at = ?, updated_at = ?
+       WHERE id = ? AND version = ? AND takeback_requested_by = ?`,
+    ).bind(now, now, match.id, match.version, match.takeback_requested_by).run();
     if (result.meta.changes !== 1) return Response.json({ error: '대국 상태가 변경되었습니다.' }, { status: 409 });
     return Response.json({ ok: true });
   }

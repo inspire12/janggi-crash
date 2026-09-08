@@ -10,13 +10,15 @@ export type PlayerProfile = {
   losses: number;
   draws: number;
   streak: number;
+  allow_takeback_requests: number;
   terms_accepted_at: number;
 };
 
 export async function getPlayer(userId: string) {
   return getDatabase()
     .prepare(
-      `SELECT id, email, display_name, elo, wins, losses, draws, streak, terms_accepted_at
+      `SELECT id, email, display_name, elo, wins, losses, draws, streak,
+              allow_takeback_requests, terms_accepted_at
        FROM players WHERE id = ?`,
     )
     .bind(userId)

@@ -8,8 +8,9 @@ import FriendPanel from './friend-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { formations, type Formation } from '@/lib/janggi';
+import { Switch } from '@/components/ui/switch';
 
-type Profile = { email: string; displayName: string; elo: number; wins: number; losses: number; draws: number; streak: number; games: number; winRate: number; rank: { name: string; key: string } };
+type Profile = { email: string; displayName: string; elo: number; wins: number; losses: number; draws: number; streak: number; games: number; winRate: number; allowTakebackRequests: boolean; rank: { name: string; key: string } };
 
 const tabItems = [
   { value: 'match', label: '대국', icon: Swords },
@@ -73,7 +74,7 @@ export default function LobbyClient() {
     <main className="mobile-lobby-shell">
       <OnlineFormationDialog open={formationOpen} value={formation} onOpenChange={setFormationOpen} onChange={setFormation} onConfirm={() => void changeQueue('join')} busy={busy} />
       <Tabs defaultValue="match" className="lobby-tabs">
-        <LobbyHeader profile={profile} />
+        <LobbyHeader profile={profile} onProfileChange={setProfile} />
         <div className="lobby-main">
           <TabsContent value="match"><MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} formation={formation} onQueue={changeQueue} onChooseFormation={() => setFormationOpen(true)} /></TabsContent>
           <TabsContent value="review"><EmptyTab icon={History} eyebrow="GAME RECORDS" title="기보와 복기" text="완료한 대국의 수순을 다시 보고, 중요한 장면을 저장해 분석합니다." action="내 기보 보기" /></TabsContent>
@@ -89,19 +90,41 @@ export default function LobbyClient() {
   );
 }
 
-function LobbyHeader({ profile }: { profile: Profile | null }) {
+function LobbyHeader({ profile, onProfileChange }: { profile: Profile | null; onProfileChange: (profile: Profile) => void }) {
   return <header className="mobile-lobby-header">
-    <Sheet><SheetTrigger className="profile-trigger" aria-label="내 정보 열기"><Menu size={20} /><span className="mini-avatar">將</span></SheetTrigger><ProfileSheet profile={profile} /></Sheet>
+    <Sheet><SheetTrigger className="profile-trigger" aria-label="내 정보 열기"><Menu size={20} /><span className="mini-avatar">將</span></SheetTrigger><ProfileSheet profile={profile} onProfileChange={onProfileChange} /></Sheet>
     <Link className="lobby-wordmark" href="/"><i>將</i><span>장기: 격돌</span></Link>
     <button className="notification-button" aria-label="알림"><Bell size={20} /><i /></button>
   </header>;
 }
 
-function ProfileSheet({ profile }: { profile: Profile | null }) {
+function ProfileSheet({ profile, onProfileChange }: { profile: Profile | null; onProfileChange: (profile: Profile) => void }) {
+  const [savingTakeback, setSavingTakeback] = useState(false);
+  const [settingError, setSettingError] = useState('');
   const maskedEmail = profile?.email.replace(/^(.{2}).*(@.*)$/, '$1••••$2') ?? '';
+  async function changeTakebackPreference(allowTakebackRequests: boolean) {
+    if (!profile) return;
+    setSavingTakeback(true);
+    setSettingError('');
+    try {
+      const response = await fetch('/api/me', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ allowTakebackRequests }),
+      });
+      const result = await response.json() as { error?: string; allowTakebackRequests?: boolean };
+      if (!response.ok) throw new Error(result.error ?? '설정을 저장하지 못했습니다.');
+      onProfileChange({ ...profile, allowTakebackRequests: Boolean(result.allowTakebackRequests) });
+    } catch (cause) {
+      setSettingError(cause instanceof Error ? cause.message : '설정을 저장하지 못했습니다.');
+    } finally {
+      setSavingTakeback(false);
+    }
+  }
   return <SheetContent side="left" className="profile-sheet">
     <SheetHeader className="profile-sheet-head"><div className={`sheet-emblem ${profile?.rank.key ?? ''}`}><Shield size={26} /></div><SheetTitle>{profile?.displayName ?? '지휘관'}</SheetTitle><SheetDescription>{maskedEmail}</SheetDescription></SheetHeader>
     {profile && <><section className="sheet-rating"><span>{profile.rank.name}</span><strong>{profile.elo}</strong><small>ELO</small></section><section className="sheet-record"><div><strong>{profile.games}</strong><span>대국</span></div><div><strong>{profile.wins}</strong><span>승</span></div><div><strong>{profile.losses}</strong><span>패</span></div><div><strong>{profile.winRate}%</strong><span>승률</span></div></section></>}
+    {profile && <section className="sheet-preferences"><div><Settings /><span><strong>무르기 요청 받기</strong><small>끄면 상대가 무르기를 요청할 수 없습니다.</small></span><Switch aria-label="무르기 요청 받기" checked={profile.allowTakebackRequests} disabled={savingTakeback} onCheckedChange={(checked) => void changeTakebackPreference(checked)} /></div>{settingError && <p>{settingError}</p>}</section>}
     <nav className="sheet-menu"><button><CircleUserRound /><span>프로필 및 개인정보</span><ChevronRight /></button><button><Trophy /><span>전적과 계급</span><ChevronRight /></button><button><Settings /><span>환경설정</span><ChevronRight /></button></nav>
     {/* Dispatch-owned authentication requires a top-level anchor navigation. */}
     {/* oxlint-disable-next-line next/no-html-link-for-pages */}

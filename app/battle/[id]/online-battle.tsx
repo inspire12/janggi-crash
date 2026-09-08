@@ -8,7 +8,7 @@ import { applyMove, isInCheck, legalMoves, type Piece, pieceLabel, type Point, t
 
 type Player = { id?: string; side?: Side; displayName?: string; elo?: number; rank?: { name: string; key: string } };
 type Payload = {
-  match: { id: string; status: 'active' | 'finished'; turn: Side; board: Piece[]; version: number; winnerSide: Side | null; resultReason: string | null; choTimeMs: number; hanTimeMs: number; clockSyncedAt: number; canTakeback: boolean; takebackRequested: boolean; takebackRequestedByMe: boolean };
+  match: { id: string; status: 'active' | 'finished'; turn: Side; board: Piece[]; version: number; winnerSide: Side | null; resultReason: string | null; choTimeMs: number; hanTimeMs: number; clockSyncedAt: number; canTakeback: boolean; takebackRequested: boolean; takebackRequestedByMe: boolean; opponentAllowsTakeback: boolean };
   you: Player & { side: Side };
   opponent: Player;
 };
@@ -174,7 +174,7 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
             {result && <output className={`mate-banner ${data.match.winnerSide}`}><span>{data.match.resultReason === 'resign' ? 'RESIGN' : 'CHECKMATE'}</span><strong>{result}</strong><b>{result === '승리' ? '전적 반영 완료' : '다음 대국을 준비하세요'}</b></output>}
           </div></div>
           <div className={`status-strip ${illegalMove ? 'illegal-status' : ''}`} aria-live="polite"><span className="status-dot" /><p>{error || (trialBoard ? '둬보기 중 · 실제 대국에는 반영되지 않습니다.' : result ? `대국 종료 · ${result}` : isMyTurn ? '기물을 선택해 수를 두세요.' : '상대의 수를 기다리고 있습니다.')}</p></div>
-          {data.match.status === 'active' && <div className="battle-tools"><button disabled={sending || !data.match.canTakeback || data.match.takebackRequested || Boolean(trialBoard)} onClick={() => void matchAction('takeback-request')}><Undo2 /> 무르기</button><button className={trialBoard ? 'active' : ''} disabled={sending || data.match.takebackRequested} onClick={toggleTrial}><FlaskConical /> {trialBoard ? '둬보기 종료' : '둬보기'}</button><button className="danger" disabled={sending || Boolean(trialBoard)} onClick={() => void resign()}><Flag /> 기권</button></div>}
+          {data.match.status === 'active' && <div className="battle-tools"><button title={data.match.opponentAllowsTakeback ? '상대에게 직전 수 무르기를 요청합니다.' : '상대가 무르기 요청을 받지 않습니다.'} disabled={sending || !data.match.canTakeback || data.match.takebackRequested || !data.match.opponentAllowsTakeback || Boolean(trialBoard)} onClick={() => void matchAction('takeback-request')}><Undo2 /> {data.match.opponentAllowsTakeback ? '무르기 요청' : '무르기 거부 중'}</button><button className={trialBoard ? 'active' : ''} disabled={sending || data.match.takebackRequested} onClick={toggleTrial}><FlaskConical /> {trialBoard ? '둬보기 종료' : '둬보기'}</button><button className="danger" disabled={sending || Boolean(trialBoard)} onClick={() => void resign()}><Flag /> 기권</button></div>}
         </div>
         <OnlinePlayer player={data.you} side={data.you.side} active={Boolean(isMyTurn)} label="나" timeMs={clock(data.you.side)} />
       </section>

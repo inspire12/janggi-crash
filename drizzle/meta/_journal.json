@@ -43,6 +43,13 @@
       "when": 1788863773453,
       "tag": "0005_uneven_sharon_ventura",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788868307104,
+      "tag": "0006_gigantic_fallen_one",
+      "breakpoints": true
     }
   ]
 }
