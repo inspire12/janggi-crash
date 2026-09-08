@@ -10,6 +10,8 @@
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
+    "lint:app": "oxlint app db lib",
+    "typecheck": "tsc --noEmit",
     "format": "oxfmt",
     "db:generate": "drizzle-kit generate"
   },
