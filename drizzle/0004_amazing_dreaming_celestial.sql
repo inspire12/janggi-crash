@@ -1,0 +1,1 @@
+ALTER TABLE `matchmaking_queue` ADD `formation` text DEFAULT 'horse-elephant-elephant-horse' NOT NULL;

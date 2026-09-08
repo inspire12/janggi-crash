@@ -4,7 +4,10 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { Bell, Bot, ChevronRight, CircleUserRound, Clock3, Gift, History, LogOut, Menu, Radio, Settings, Shield, ShoppingBag, Swords, Trophy, UserRoundPlus, Users } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import FriendPanel from './friend-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { formations, type Formation } from '@/lib/janggi';
 
 type Profile = { email: string; displayName: string; elo: number; wins: number; losses: number; draws: number; streak: number; games: number; winRate: number; rank: { name: string; key: string } };
 
@@ -22,6 +25,8 @@ export default function LobbyClient() {
   const [matchId, setMatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [formation, setFormation] = useState<Formation>('horse-elephant-elephant-horse');
+  const [formationOpen, setFormationOpen] = useState(false);
 
   const refreshQueue = useCallback(async (enterMatchedGame = false) => {
     const response = await fetch('/api/matchmaking', { cache: 'no-store' });
@@ -51,11 +56,12 @@ export default function LobbyClient() {
     setBusy(true);
     setError('');
     try {
-      const response = await fetch('/api/matchmaking', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action }) });
+      const response = await fetch('/api/matchmaking', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, formation }) });
       const data = (await response.json()) as { queued?: boolean; matchId?: string; error?: string };
       if (!response.ok) throw new Error(data.error ?? '요청에 실패했습니다.');
       if (data.matchId) return window.location.assign(`/battle/${data.matchId}`);
       setQueued(Boolean(data.queued));
+      setFormationOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '요청에 실패했습니다.');
     } finally {
@@ -65,10 +71,11 @@ export default function LobbyClient() {
 
   return (
     <main className="mobile-lobby-shell">
+      <OnlineFormationDialog open={formationOpen} value={formation} onOpenChange={setFormationOpen} onChange={setFormation} onConfirm={() => void changeQueue('join')} busy={busy} />
       <Tabs defaultValue="match" className="lobby-tabs">
         <LobbyHeader profile={profile} />
         <div className="lobby-main">
-          <TabsContent value="match"><MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} onQueue={changeQueue} /></TabsContent>
+          <TabsContent value="match"><MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} formation={formation} onQueue={changeQueue} onChooseFormation={() => setFormationOpen(true)} /></TabsContent>
           <TabsContent value="review"><EmptyTab icon={History} eyebrow="GAME RECORDS" title="기보와 복기" text="완료한 대국의 수순을 다시 보고, 중요한 장면을 저장해 분석합니다." action="내 기보 보기" /></TabsContent>
           <TabsContent value="friends"><CommunityTab /></TabsContent>
           <TabsContent value="ai"><EmptyTab icon={Bot} eyebrow="TRAINING" title="컴퓨터와 두기" text="난이도와 진영을 선택하고 시간 제한 없이 새로운 수를 연습합니다." action="연습 대국 시작" href="/" /></TabsContent>
@@ -102,13 +109,18 @@ function ProfileSheet({ profile }: { profile: Profile | null }) {
   </SheetContent>;
 }
 
-function MatchTab({ profile, matchId, queued, busy, error, onQueue }: { profile: Profile | null; matchId: string | null; queued: boolean; busy: boolean; error: string; onQueue: (action: 'join' | 'cancel') => Promise<void> }) {
+function MatchTab({ profile, matchId, queued, busy, error, formation, onQueue, onChooseFormation }: { profile: Profile | null; matchId: string | null; queued: boolean; busy: boolean; error: string; formation: Formation; onQueue: (action: 'join' | 'cancel') => Promise<void>; onChooseFormation: () => void }) {
+  const formationLabel = formations.find((item) => item.value === formation)?.label;
   return <div className="match-tab-content">
     <div className="lobby-greeting"><span><Radio size={13} /> 오늘도 한판!</span><h1>대국하기</h1><p>실력이 비슷한 상대와 가볍게 한판 시작해요.</p></div>
     {matchId && <section className="resume-match-card"><div><span>두던 대국이 있어요</span><strong>이어서 둘까요?</strong><small><Clock3 size={13} /> 마지막 상태 그대로 보관되어 있어요.</small></div><Link href={`/battle/${matchId}`}>이어서 두기 <ChevronRight /></Link></section>}
-    <section className="quick-match-card"><div className="quick-rank"><div className={`rank-emblem ${profile?.rank.key ?? ''}`}><Shield size={27} /></div><div><span>나의 기력</span><strong>{profile?.elo ?? '—'} <small>ELO</small></strong><em>{profile?.rank.name ?? '불러오는 중'}</em></div></div><button className={`match-button ${queued ? 'searching' : ''}`} disabled={busy || Boolean(matchId)} onClick={() => void onQueue(queued ? 'cancel' : 'join')}><Swords size={21} />{busy ? '연결 중…' : queued ? '상대 찾는 중 · 취소' : matchId ? '진행 중인 대국이 있어요' : '바로 대국하기'}</button>{queued && <p className="queue-message"><i /> 비슷한 실력의 상대를 찾고 있어요.</p>}{error && <p className="form-error">{error}</p>}</section>
+    <section className="quick-match-card"><div className="quick-rank"><div className={`rank-emblem ${profile?.rank.key ?? ''}`}><Shield size={27} /></div><div><span>나의 기력</span><strong>{profile?.elo ?? '—'} <small>ELO</small></strong><em>{profile?.rank.name ?? '불러오는 중'}</em></div></div>{queued && <div className="queued-formation"><span>선택 포진</span><strong>{formationLabel}</strong></div>}<button className={`match-button ${queued ? 'searching' : ''}`} disabled={busy || Boolean(matchId)} onClick={() => queued ? void onQueue('cancel') : onChooseFormation()}><Swords size={21} />{busy ? '연결 중…' : queued ? '상대 찾는 중 · 취소' : matchId ? '진행 중인 대국이 있어요' : '바로 대국하기'}</button>{queued && <p className="queue-message"><i /> 포진을 잠그고 비슷한 실력의 상대를 찾고 있어요.</p>}{error && <p className="form-error">{error}</p>}</section>
     <section className="live-rooms-section"><div className="section-heading"><div><span>구경하기</span><h2>지금 두는 대국</h2></div><button>전체 보기 <ChevronRight /></button></div><div className="empty-room"><Radio /><strong>아직 관전할 대국이 없어요</strong><span>새 대국이 시작되면 바로 알려드릴게요.</span></div></section>
   </div>;
+}
+
+function OnlineFormationDialog({ open, value, onOpenChange, onChange, onConfirm, busy }: { open: boolean; value: Formation; onOpenChange: (open: boolean) => void; onChange: (formation: Formation) => void; onConfirm: () => void; busy: boolean }) {
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="online-formation-dialog"><DialogHeader><span className="formation-eyebrow">ONLINE FORMATION</span><DialogTitle>내 포진 선택</DialogTitle><DialogDescription>매칭이 시작되면 포진은 잠기며, 상대의 포진은 대국판에서 공개됩니다.</DialogDescription></DialogHeader><div className="online-formation-options">{formations.map((item) => <button type="button" key={item.value} className={value === item.value ? 'selected' : ''} aria-pressed={value === item.value} onClick={() => onChange(item.value)}><span><i>車</i>{item.order.map((kind, index) => <b key={`${kind}-${index}`}>{kind === 'horse' ? '馬' : '象'}</b>)}<i>車</i></span><strong>{item.label}</strong></button>)}</div><button className="formation-start" disabled={busy} onClick={onConfirm}><Swords size={18} />{busy ? '매칭 준비 중…' : '이 포진으로 상대 찾기'}</button></DialogContent></Dialog>;
 }
 
 function EmptyTab({ icon: Icon, eyebrow, title, text, action, href }: { icon: typeof History; eyebrow: string; title: string; text: string; action: string; href?: string }) {
@@ -139,6 +151,7 @@ function CommunityTab() {
   }
   return <section className="community-tab">
     <div className="lobby-greeting"><span><Users size={13} /> COMMUNITY</span><h1>길드와 친구</h1><p>함께할 동료를 모으고 친선 대국을 준비하세요.</p></div>
+    <FriendPanel />
     <div className="community-grid"><article><div className="community-icon"><Users /></div><span>MY GUILD</span>{data?.guild ? <><h2>{data.guild.name}</h2><p>{data.guild.member_count}명 · {data.guild.role === 'owner' ? '길드장' : '길드원'}</p><button disabled>길드 관리 <small>준비 중</small></button></> : <><h2>소속 길드 없음</h2><p>길드를 만들고 이후 친구 초대 기능을 이용할 수 있습니다.</p><form onSubmit={createGuild}><input value={name} onChange={(event) => setName(event.target.value)} minLength={2} maxLength={16} placeholder="길드명" aria-label="길드명" required /><button>길드 만들기</button></form>{error && <p className="form-error">{error}</p>}</>}</article>
       <article><div className="community-icon villain"><UserRoundPlus /></div><span>BLOCK LIST</span><h2>악당 목록</h2>{data?.blocked.length ? <ul>{data.blocked.map((player) => <li key={player.id}><span>{player.display_name}</span><button onClick={() => void unblock(player.id)}>해제</button></li>)}</ul> : <p>등록된 악당이 없습니다. 대국 채팅에서 상대를 등록하면 메시지가 차단됩니다.</p>}</article></div>
   </section>;

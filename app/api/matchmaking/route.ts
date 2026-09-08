@@ -1,10 +1,10 @@
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { getDatabase } from '@/db';
 import { getPlayer } from '@/db/players';
-import { initialPieces } from '@/lib/janggi';
+import { createInitialPieces, isFormation, type Formation } from '@/lib/janggi';
 
 type ActiveMatch = { id: string };
-type QueueOpponent = { user_id: string; elo: number };
+type QueueOpponent = { user_id: string; elo: number; formation: string };
 
 export async function GET() {
   const user = await getChatGPTUser();
@@ -30,7 +30,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
-  const body = (await request.json().catch(() => ({}))) as { action?: string };
+  const body = (await request.json().catch(() => ({}))) as { action?: string; formation?: unknown };
   const profile = await getPlayer(user.userId);
   if (!profile || profile.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   const db = getDatabase();
@@ -42,6 +42,10 @@ export async function POST(request: Request) {
   if (body.action !== 'join') {
     return Response.json({ error: '지원하지 않는 요청입니다.' }, { status: 400 });
   }
+  if (!isFormation(body.formation)) {
+    return Response.json({ error: '올바른 포진을 선택해 주세요.' }, { status: 400 });
+  }
+  const formation: Formation = body.formation;
 
   const active = await db
     .prepare(
@@ -55,7 +59,7 @@ export async function POST(request: Request) {
 
   const opponent = await db
     .prepare(
-      `SELECT user_id, elo FROM matchmaking_queue
+      `SELECT user_id, elo, formation FROM matchmaking_queue
        WHERE user_id != ?
        ORDER BY ABS(elo - ?), joined_at
        LIMIT 1`,
@@ -65,11 +69,11 @@ export async function POST(request: Request) {
   if (!opponent) {
     await db
       .prepare(
-        `INSERT INTO matchmaking_queue (user_id, elo, joined_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(user_id) DO UPDATE SET elo = excluded.elo, joined_at = excluded.joined_at`,
+        `INSERT INTO matchmaking_queue (user_id, elo, formation, joined_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET elo = excluded.elo, formation = excluded.formation, joined_at = excluded.joined_at`,
       )
-      .bind(user.userId, profile.elo, Date.now())
+      .bind(user.userId, profile.elo, formation, Date.now())
       .run();
     return Response.json({ queued: true, matchId: null });
   }
@@ -78,6 +82,11 @@ export async function POST(request: Request) {
   const userIsCho = crypto.getRandomValues(new Uint8Array(1))[0] % 2 === 0;
   const cho = userIsCho ? user.userId : opponent.user_id;
   const han = userIsCho ? opponent.user_id : user.userId;
+  const opponentFormation: Formation = isFormation(opponent.formation)
+    ? opponent.formation
+    : 'horse-elephant-elephant-horse';
+  const choFormation = userIsCho ? formation : opponentFormation;
+  const hanFormation = userIsCho ? opponentFormation : formation;
   const now = Date.now();
   await db.batch([
     db
@@ -87,7 +96,7 @@ export async function POST(request: Request) {
           cho_time_ms, han_time_ms, turn_started_at, created_at, updated_at)
          VALUES (?, ?, ?, 'active', 'cho', ?, 0, 600000, 600000, ?, ?, ?)`,
       )
-      .bind(matchId, cho, han, JSON.stringify(initialPieces), now, now, now),
+      .bind(matchId, cho, han, JSON.stringify(createInitialPieces(choFormation, hanFormation)), now, now, now),
     db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(user.userId),
     db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(opponent.user_id),
   ]);

@@ -11,6 +11,11 @@ type MatchRow = {
   status: 'active' | 'finished';
   turn: Side;
   board_json: string;
+  previous_board_json: string | null;
+  previous_turn: Side | null;
+  previous_cho_time_ms: number | null;
+  previous_han_time_ms: number | null;
+  takeback_requested_by: string | null;
   version: number;
   winner_user_id: string | null;
   result_reason: string | null;
@@ -24,7 +29,9 @@ type MatchRow = {
 async function ownedMatch(matchId: string, userId: string) {
   return getDatabase()
     .prepare(
-      `SELECT id, cho_user_id, han_user_id, status, turn, board_json, version,
+      `SELECT id, cho_user_id, han_user_id, status, turn, board_json,
+              previous_board_json, previous_turn, previous_cho_time_ms,
+              previous_han_time_ms, takeback_requested_by, version,
               winner_user_id, result_reason, cho_time_ms, han_time_ms,
               turn_started_at, created_at, updated_at
        FROM matches
@@ -83,6 +90,9 @@ export async function GET(request: Request) {
       hanTimeMs,
       clockSyncedAt: now,
       updatedAt: match.updated_at,
+      canTakeback: Boolean(match.previous_board_json),
+      takebackRequested: Boolean(match.takeback_requested_by),
+      takebackRequestedByMe: match.takeback_requested_by === user.userId,
     },
     you: { side, ...presentPlayer(side === 'cho' ? cho : han) },
     opponent: presentPlayer(side === 'cho' ? han : cho),
@@ -96,7 +106,7 @@ export async function POST(request: Request) {
   if (!account || account.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   const body = (await request.json().catch(() => ({}))) as {
     matchId?: string;
-    action?: 'move' | 'resign';
+    action?: 'move' | 'resign' | 'takeback-request' | 'takeback-accept' | 'takeback-reject';
     pieceId?: string;
     to?: { x?: number; y?: number };
     version?: number;
@@ -111,6 +121,35 @@ export async function POST(request: Request) {
   if (body.action === 'resign') {
     await finishMatch(match, opponentId, user.userId, 'resign');
     return Response.json({ ok: true, finished: true });
+  }
+  if (body.action === 'takeback-request') {
+    if (!match.previous_board_json) return Response.json({ error: '무를 수 있는 수가 없습니다.' }, { status: 409 });
+    const result = await getDatabase().prepare(
+      `UPDATE matches SET takeback_requested_by = ?, updated_at = ?
+       WHERE id = ? AND status = 'active' AND takeback_requested_by IS NULL`,
+    ).bind(user.userId, Date.now(), match.id).run();
+    if (result.meta.changes !== 1) return Response.json({ error: '이미 무르기 요청이 진행 중입니다.' }, { status: 409 });
+    return Response.json({ ok: true });
+  }
+  if (body.action === 'takeback-reject') {
+    if (!match.takeback_requested_by || match.takeback_requested_by === user.userId) return Response.json({ error: '응답할 무르기 요청이 없습니다.' }, { status: 409 });
+    await getDatabase().prepare('UPDATE matches SET takeback_requested_by = NULL, updated_at = ? WHERE id = ?').bind(Date.now(), match.id).run();
+    return Response.json({ ok: true });
+  }
+  if (body.action === 'takeback-accept') {
+    if (!match.takeback_requested_by || match.takeback_requested_by === user.userId || !match.previous_board_json || !match.previous_turn) return Response.json({ error: '수락할 무르기 요청이 없습니다.' }, { status: 409 });
+    const now = Date.now();
+    const result = await getDatabase().prepare(
+      `UPDATE matches SET board_json = previous_board_json, turn = previous_turn,
+       cho_time_ms = COALESCE(previous_cho_time_ms, cho_time_ms),
+       han_time_ms = COALESCE(previous_han_time_ms, han_time_ms),
+       previous_board_json = NULL, previous_turn = NULL,
+       previous_cho_time_ms = NULL, previous_han_time_ms = NULL,
+       takeback_requested_by = NULL, version = version + 1,
+       turn_started_at = ?, updated_at = ? WHERE id = ? AND version = ?`,
+    ).bind(now, now, match.id, match.version).run();
+    if (result.meta.changes !== 1) return Response.json({ error: '대국 상태가 변경되었습니다.' }, { status: 409 });
+    return Response.json({ ok: true });
   }
   if (
     body.action !== 'move' ||
@@ -145,7 +184,10 @@ export async function POST(request: Request) {
       `UPDATE matches
        SET board_json = ?, turn = ?, version = version + 1, updated_at = ?,
            status = ?, winner_user_id = ?, result_reason = ?,
-           cho_time_ms = ?, han_time_ms = ?, turn_started_at = ?
+           cho_time_ms = ?, han_time_ms = ?, turn_started_at = ?,
+           previous_board_json = ?, previous_turn = ?,
+           previous_cho_time_ms = ?, previous_han_time_ms = ?,
+           takeback_requested_by = NULL
        WHERE id = ? AND version = ? AND status = 'active'`,
     )
     .bind(
@@ -158,6 +200,10 @@ export async function POST(request: Request) {
       choTimeMs,
       hanTimeMs,
       now,
+      match.board_json,
+      match.turn,
+      match.cho_time_ms,
+      match.han_time_ms,
       match.id,
       match.version,
     );

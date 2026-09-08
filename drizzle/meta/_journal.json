@@ -22,6 +22,27 @@
       "when": 1788782001295,
       "tag": "0002_goofy_green_goblin",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1788846377330,
+      "tag": "0003_burly_fixer",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788860570337,
+      "tag": "0004_amazing_dreaming_celestial",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788863773453,
+      "tag": "0005_uneven_sharon_ventura",
+      "breakpoints": true
     }
   ]
 }

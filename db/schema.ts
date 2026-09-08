@@ -17,6 +17,7 @@ export const players = sqliteTable('players', {
 export const matchmakingQueue = sqliteTable('matchmaking_queue', {
   userId: text('user_id').primaryKey().references(() => players.id, { onDelete: 'cascade' }),
   elo: integer('elo').notNull(),
+  formation: text('formation').notNull().default('horse-elephant-elephant-horse'),
   joinedAt: integer('joined_at').notNull(),
 }, (table) => [index('idx_queue_joined_at').on(table.joinedAt)]);
 
@@ -27,6 +28,11 @@ export const matches = sqliteTable('matches', {
   status: text('status').notNull().default('active'),
   turn: text('turn').notNull().default('cho'),
   boardJson: text('board_json').notNull(),
+  previousBoardJson: text('previous_board_json'),
+  previousTurn: text('previous_turn'),
+  previousChoTimeMs: integer('previous_cho_time_ms'),
+  previousHanTimeMs: integer('previous_han_time_ms'),
+  takebackRequestedBy: text('takeback_requested_by').references(() => players.id),
   version: integer('version').notNull().default(0),
   winnerUserId: text('winner_user_id').references(() => players.id),
   resultReason: text('result_reason'),
@@ -68,6 +74,18 @@ export const guildMembers = sqliteTable('guild_members', {
   role: text('role').notNull().default('member'),
   joinedAt: integer('joined_at').notNull(),
 }, (table) => [index('idx_guild_members_guild').on(table.guildId)]);
+
+export const friendships = sqliteTable('friendships', {
+  pairKey: text('pair_key').primaryKey(),
+  requesterUserId: text('requester_user_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+  addresseeUserId: text('addressee_user_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
+  status: text('status').notNull().default('pending'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+}, (table) => [
+  index('idx_friendships_requester').on(table.requesterUserId, table.status),
+  index('idx_friendships_addressee').on(table.addresseeUserId, table.status),
+]);
 
 export const blockedPlayers = sqliteTable('blocked_players', {
   blockerUserId: text('blocker_user_id').notNull().references(() => players.id, { onDelete: 'cascade' }),

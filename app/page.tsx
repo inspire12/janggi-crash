@@ -1,17 +1,23 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCcw, Sparkles, Swords, Volume2, VolumeX } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { Flag, FlaskConical, RotateCcw, Sparkles, Swords, Undo2, Volume2, VolumeX } from 'lucide-react';
 import Link from 'next/link';
+import JanggiBoardMarks from '@/components/janggi-board-marks';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   applyMove,
+  createInitialPieces,
+  formations,
   initialPieces,
+  pieceLabel,
   isCheckmate,
   isInCheck,
   legalMoves,
   type Piece,
   type Side,
   type Kind,
+  type Formation,
 } from '@/lib/janggi';
 const PIECE_SCORE: Record<Kind, number> = {
   king: 0,
@@ -61,6 +67,12 @@ export default function Home() {
       tier: number;
     } | null>(null),
     [status, setStatus] = useState('초의 기물을 선택하세요.');
+  const [choFormation, setChoFormation] = useState<Formation>('horse-elephant-elephant-horse');
+  const [hanFormation, setHanFormation] = useState<Formation>('elephant-horse-horse-elephant');
+  const [setupOpen, setSetupOpen] = useState(true);
+  const [illegalMove, setIllegalMove] = useState(false);
+  const [history, setHistory] = useState<Array<{ pieces: Piece[]; turn: Side }>>([]);
+  const [trialSnapshot, setTrialSnapshot] = useState<{ pieces: Piece[]; turn: Side; winner: Side | null } | null>(null);
   const motionSequence = useRef(0);
   const selectedPiece = pieces.find((p) => p.id === selected);
   const targets = useMemo(
@@ -72,6 +84,23 @@ export default function Home() {
     const t = window.setTimeout(() => setImpact(null), 900);
     return () => window.clearTimeout(t);
   }, [impact]);
+  useEffect(() => {
+    if (!illegalMove) return;
+    const timer = window.setTimeout(() => setIllegalMove(false), 460);
+    return () => window.clearTimeout(timer);
+  }, [illegalMove]);
+  function rejectCheckedMove() {
+    setIllegalMove(false);
+    requestAnimationFrame(() => setIllegalMove(true));
+    setStatus('장군을 먼저 막아야 합니다. 표시된 자리로 이동하세요.');
+  }
+  function handleBoardClick(event: MouseEvent<HTMLDivElement>) {
+    if (event.target instanceof Element && event.target.closest('button')) return;
+    if (isInCheck(turn, pieces)) rejectCheckedMove();
+  }
+  function handleBoardKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if ((event.key === 'Enter' || event.key === ' ') && isInCheck(turn, pieces)) rejectCheckedMove();
+  }
   useEffect(() => {
     const context = document.modelContext;
     if (!context?.registerTool) return;
@@ -91,6 +120,7 @@ export default function Home() {
           execute() {
             motionSequence.current += 1;
             setPieces(initialPieces);
+            setSetupOpen(true);
             setSelected(null);
             setTurn('cho');
             setWinner(null);
@@ -110,6 +140,8 @@ export default function Home() {
     if (p.side !== turn) {
       if (selectedPiece && targets.some((to) => to.x === p.x && to.y === p.y)) {
         move(p.x, p.y);
+      } else if (isInCheck(turn, pieces)) {
+        rejectCheckedMove();
       }
       return;
     }
@@ -118,9 +150,14 @@ export default function Home() {
       setStatus(`${turn === 'cho' ? '초' : '한'}의 기물을 선택하세요.`);
       return;
     }
+    const moves = legalMoves(p, pieces);
+    if (isInCheck(turn, pieces) && moves.length === 0) {
+      rejectCheckedMove();
+      return;
+    }
     setSelected(p.id);
     setStatus(
-      `${p.name} 선택 — 이동 가능한 자리 ${legalMoves(p, pieces).length}곳`,
+      `${p.name} 선택 — 이동 가능한 자리 ${moves.length}곳`,
     );
   }
   function move(x: number, y: number) {
@@ -135,6 +172,7 @@ export default function Home() {
       (p) => p.x === x && p.y === y && p.side !== selectedPiece.side,
     );
     const nextPieces = applyMove(pieces, selectedPiece.id, { x, y });
+    if (!trialSnapshot) setHistory((current) => [...current, { pieces, turn }]);
     const nextTurn = turn === 'cho' ? 'han' : 'cho';
     const checkmate = isCheckmate(nextTurn, nextPieces);
     const movingId = selectedPiece.id;
@@ -191,18 +229,77 @@ export default function Home() {
   }
   function reset() {
     motionSequence.current += 1;
-    setPieces(initialPieces);
+    setPieces(createInitialPieces(choFormation, hanFormation));
     setSelected(null);
     setTurn('cho');
     setWinner(null);
     setImpact(null);
     setMotion(null);
     setStatus('초의 기물을 선택하세요.');
+    setSetupOpen(true);
+    setHistory([]);
+    setTrialSnapshot(null);
+  }
+  function startMatch() {
+    motionSequence.current += 1;
+    setPieces(createInitialPieces(choFormation, hanFormation));
+    setSelected(null);
+    setTurn('cho');
+    setWinner(null);
+    setImpact(null);
+    setMotion(null);
+    setStatus('초의 기물을 선택하세요.');
+    setSetupOpen(false);
+    setHistory([]);
+    setTrialSnapshot(null);
+  }
+  function takeback() {
+    if (motion || trialSnapshot || history.length === 0) return;
+    const previous = history[history.length - 1];
+    motionSequence.current += 1;
+    setPieces(previous.pieces);
+    setTurn(previous.turn);
+    setWinner(null);
+    setSelected(null);
+    setImpact(null);
+    setMotion(null);
+    setHistory((current) => current.slice(0, -1));
+    setStatus('직전 수를 물렀습니다.');
+  }
+  function resign() {
+    if (winner || motion || !window.confirm(`${turn === 'cho' ? '초' : '한'} 진영이 기권할까요?`)) return;
+    setWinner(turn === 'cho' ? 'han' : 'cho');
+    setSelected(null);
+    setStatus(`${turn === 'cho' ? '초' : '한'}의 기권으로 ${turn === 'cho' ? '한' : '초'}가 승리했습니다.`);
+  }
+  function toggleTrial() {
+    if (motion || winner) return;
+    if (trialSnapshot) {
+      setPieces(trialSnapshot.pieces);
+      setTurn(trialSnapshot.turn);
+      setWinner(trialSnapshot.winner);
+      setTrialSnapshot(null);
+      setSelected(null);
+      setImpact(null);
+      setStatus('실제 대국으로 돌아왔습니다.');
+      return;
+    }
+    setTrialSnapshot({ pieces, turn, winner });
+    setSelected(null);
+    setStatus('둬보기 중 · 시험한 수는 실제 대국에 반영되지 않습니다.');
   }
   return (
     <main
       className={`game-shell ${impact && cinema ? `screen-impact impact-screen-${impact.tier}` : ''}`}
     >
+      <FormationDialog
+        open={setupOpen}
+        cho={choFormation}
+        han={hanFormation}
+        onCho={setChoFormation}
+        onHan={setHanFormation}
+        onStart={startMatch}
+      />
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">
@@ -232,6 +329,9 @@ export default function Home() {
           <button className="text-btn" onClick={reset}>
             <RotateCcw size={15} /> 다시 두기
           </button>
+          <button className="text-btn" disabled={history.length === 0 || Boolean(trialSnapshot)} onClick={takeback}><Undo2 size={15} /> 무르기</button>
+          <button className={`text-btn ${trialSnapshot ? 'active' : ''}`} disabled={Boolean(winner)} onClick={toggleTrial}><FlaskConical size={15} /> {trialSnapshot ? '둬보기 종료' : '둬보기'}</button>
+          <button className="text-btn danger" disabled={Boolean(winner)} onClick={resign}><Flag size={15} /> 기권</button>
         </div>
       </header>
       <section className="match-layout">
@@ -244,16 +344,21 @@ export default function Home() {
               : turn === 'cho'
                 ? '초의 차례'
                 : '한의 차례'}
+            {trialSnapshot && <b className="trial-badge">둬보기</b>}
           </div>
           <div className="board-frame">
             <div
-              className="board"
+              className={`board ${illegalMove ? 'illegal-move' : ''}`}
               role="grid"
               aria-label="장기판 연출 프로토타입"
+              onClick={handleBoardClick}
+              onKeyDown={handleBoardKeyDown}
+              tabIndex={0}
             >
               <div className="river-mark">楚 河　　漢 界</div>
               <div className="palace palace-top" />
               <div className="palace palace-bottom" />
+              <JanggiBoardMarks />
               {targets.map((t) => (
                 <button
                   key={`${t.x}-${t.y}`}
@@ -267,7 +372,7 @@ export default function Home() {
                 <button
                   key={p.id}
                   onClick={() => choose(p)}
-                  className={`piece ${p.side} ${
+                  className={`piece ${p.side} piece-${p.kind} ${
                     ['pawn', 'guard'].includes(p.kind)
                       ? 'piece-small'
                       : p.kind === 'king'
@@ -283,7 +388,7 @@ export default function Home() {
                   style={{ left: `${p.x * 12.5}%`, top: `${p.y * (100 / 9)}%` }}
                   aria-label={`${p.side === 'cho' ? '초' : '한'} ${p.name}`}
                 >
-                  <span>{p.label}</span>
+                  <span>{pieceLabel(p)}</span>
                 </button>
               ))}
               {impact && (
@@ -299,15 +404,15 @@ export default function Home() {
                 </div>
               )}
               {winner && (
-                <div className={`mate-banner ${winner}`} role="status">
+                <output className={`mate-banner `}>
                   <span>CHECKMATE</span>
                   <strong>외통</strong>
                   <b>{winner === 'cho' ? '초' : '한'} 승리</b>
-                </div>
+                </output>
               )}
             </div>
           </div>
-          <div className="status-strip">
+          <div className={`status-strip ${illegalMove ? 'illegal-status' : ''}`} aria-live="polite">
             <span className="status-dot" />
             <p>{status}</p>
             <kbd>CLICK</kbd>
@@ -328,6 +433,31 @@ export default function Home() {
       </footer>
     </main>
   );
+}
+function FormationDialog({ open, cho, han, onCho, onHan, onStart }: { open: boolean; cho: Formation; han: Formation; onCho: (formation: Formation) => void; onHan: (formation: Formation) => void; onStart: () => void }) {
+  return <Dialog open={open} onOpenChange={() => {}}>
+    <DialogContent className="formation-dialog" showCloseButton={false}>
+      <DialogHeader>
+        <span className="formation-eyebrow">BATTLE FORMATION</span>
+        <DialogTitle>시작 포진을 정하세요</DialogTitle>
+        <DialogDescription>마와 상의 좌우 배치를 선택하면 장기판에 바로 반영됩니다.</DialogDescription>
+      </DialogHeader>
+      <FormationSide side="han" value={han} onChange={onHan} />
+      <FormationSide side="cho" value={cho} onChange={onCho} />
+      <button className="formation-start" onClick={onStart}><Swords size={18} /> 이 포진으로 대국 시작</button>
+    </DialogContent>
+  </Dialog>;
+}
+function FormationSide({ side, value, onChange }: { side: Side; value: Formation; onChange: (formation: Formation) => void }) {
+  return <fieldset className={`formation-side ${side}`}>
+    <legend><b>{side === 'cho' ? '초 · 楚' : '한 · 漢'}</b><span>{side === 'cho' ? '아래 진영' : '위 진영'}</span></legend>
+    <div className="formation-options">
+      {formations.map((formation) => <button type="button" key={formation.value} className={value === formation.value ? 'selected' : ''} aria-pressed={value === formation.value} onClick={() => onChange(formation.value)}>
+        <span className="formation-pieces"><i>車</i>{formation.order.map((kind, index) => <b key={`${kind}-${index}`}>{kind === 'horse' ? '馬' : '象'}</b>)}<i>車</i></span>
+        <strong>{formation.label}</strong>
+      </button>)}
+    </div>
+  </fieldset>;
 }
 function Player({ side, active }: { side: Side; active: boolean }) {
   const cho = side === 'cho';

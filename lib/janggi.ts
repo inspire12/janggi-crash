@@ -17,6 +17,35 @@ export type Piece = {
   name: string;
 };
 export type Point = { x: number; y: number };
+export type Formation =
+  | 'horse-elephant-horse-elephant'
+  | 'horse-elephant-elephant-horse'
+  | 'elephant-horse-elephant-horse'
+  | 'elephant-horse-horse-elephant';
+
+export const formations: Array<{
+  value: Formation;
+  label: string;
+  order: Array<'horse' | 'elephant'>;
+}> = [
+  { value: 'horse-elephant-horse-elephant', label: '마상마상', order: ['horse', 'elephant', 'horse', 'elephant'] },
+  { value: 'horse-elephant-elephant-horse', label: '마상상마', order: ['horse', 'elephant', 'elephant', 'horse'] },
+  { value: 'elephant-horse-elephant-horse', label: '상마상마', order: ['elephant', 'horse', 'elephant', 'horse'] },
+  { value: 'elephant-horse-horse-elephant', label: '상마마상', order: ['elephant', 'horse', 'horse', 'elephant'] },
+];
+
+export function isFormation(value: unknown): value is Formation {
+  return typeof value === 'string' && formations.some((formation) => formation.value === value);
+}
+
+const labelsBySideAndKind: Record<Side, Record<Kind, string>> = {
+  cho: { king: '楚', guard: '士', rook: '車', cannon: '包', horse: '馬', elephant: '象', pawn: '卒' },
+  han: { king: '漢', guard: '士', rook: '車', cannon: '包', horse: '馬', elephant: '象', pawn: '兵' },
+};
+
+export function pieceLabel(piece: Pick<Piece, 'side' | 'kind'>) {
+  return labelsBySideAndKind[piece.side][piece.kind];
+}
 
 const make = (
   id: string,
@@ -36,7 +65,7 @@ const make = (
   name,
 });
 
-export const initialPieces: Piece[] = [
+const basePieces: Piece[] = [
   make('hr1', '車', 'han', 0, 0, 'rook', '차'),
   make('he1', '象', 'han', 1, 0, 'elephant', '상'),
   make('hh1', '馬', 'han', 2, 0, 'horse', '마'),
@@ -49,13 +78,13 @@ export const initialPieces: Piece[] = [
   make('hc1', '包', 'han', 1, 2, 'cannon', '포'),
   make('hc2', '包', 'han', 7, 2, 'cannon', '포'),
   ...[0, 2, 4, 6, 8].map((x, i) =>
-    make(`hp${i}`, '卒', 'han', x, 3, 'pawn', '졸'),
+    make(`hp${i}`, '兵', 'han', x, 3, 'pawn', '병'),
   ),
   ...[0, 2, 4, 6, 8].map((x, i) =>
-    make(`cp${i}`, '兵', 'cho', x, 6, 'pawn', '병'),
+    make(`cp${i}`, '卒', 'cho', x, 6, 'pawn', '졸'),
   ),
-  make('cc1', '炮', 'cho', 1, 7, 'cannon', '포'),
-  make('cc2', '炮', 'cho', 7, 7, 'cannon', '포'),
+  make('cc1', '包', 'cho', 1, 7, 'cannon', '포'),
+  make('cc2', '包', 'cho', 7, 7, 'cannon', '포'),
   make('ck', '楚', 'cho', 4, 8, 'king', '궁'),
   make('cr1', '車', 'cho', 0, 9, 'rook', '차'),
   make('ch1', '馬', 'cho', 1, 9, 'horse', '마'),
@@ -66,6 +95,36 @@ export const initialPieces: Piece[] = [
   make('ch2', '馬', 'cho', 7, 9, 'horse', '마'),
   make('cr2', '車', 'cho', 8, 9, 'rook', '차'),
 ];
+
+export function createInitialPieces(
+  choFormation: Formation = 'horse-elephant-elephant-horse',
+  hanFormation: Formation = 'elephant-horse-horse-elephant',
+): Piece[] {
+  const selected: Record<Side, Formation> = { cho: choFormation, han: hanFormation };
+  const backRankSlots = [1, 2, 6, 7];
+  const variableIds = new Set(['he1', 'hh1', 'hh2', 'he2', 'ch1', 'ce1', 'ce2', 'ch2']);
+  const pieces = basePieces.filter((piece) => !variableIds.has(piece.id));
+
+  for (const side of ['han', 'cho'] as Side[]) {
+    const formation = formations.find((item) => item.value === selected[side]) ?? formations[0];
+    const counts = { horse: 0, elephant: 0 };
+    formation.order.forEach((kind, index) => {
+      counts[kind] += 1;
+      pieces.push(make(
+        `${side === 'cho' ? 'c' : 'h'}${kind === 'horse' ? 'h' : 'e'}${counts[kind]}`,
+        kind === 'horse' ? '馬' : '象',
+        side,
+        backRankSlots[index],
+        side === 'han' ? 0 : 9,
+        kind,
+        kind === 'horse' ? '마' : '상',
+      ));
+    });
+  }
+  return pieces;
+}
+
+export const initialPieces: Piece[] = createInitialPieces();
 
 const inside = ({ x, y }: Point) => x >= 0 && x <= 8 && y >= 0 && y <= 9;
 const same = (a: Point, b: Point) => a.x === b.x && a.y === b.y;
