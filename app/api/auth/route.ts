@@ -13,7 +13,12 @@ export async function POST(request: Request) {
     const client = await authClient();
     const { data, error } = await client.auth.signInWithOAuth({
       provider: 'kakao',
-      options: { redirectTo: new URL('/api/auth/callback', request.url).toString(), skipBrowserRedirect: true },
+      options: {
+        // Override Supabase's default Kakao scopes: this app only requests a nickname.
+        scopes: 'profile_nickname',
+        redirectTo: new URL('/api/auth/callback', request.url).toString(),
+        skipBrowserRedirect: true,
+      },
     });
     if (error || !data.url) throw new Error('OAuth initiation failed');
     return Response.json({ url: data.url }, { headers: { 'Cache-Control': 'private, no-store' } });
