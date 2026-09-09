@@ -20,7 +20,7 @@ const tabItems = [
   { value: 'shop', label: '상점', icon: ShoppingBag },
 ];
 
-export default function LobbyClient() {
+export default function LobbyClient({ registered }: { registered: boolean }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [queued, setQueued] = useState(false);
   const [matchId, setMatchId] = useState<string | null>(null);
@@ -39,13 +39,17 @@ export default function LobbyClient() {
   }, []);
 
   useEffect(() => {
+    if (!registered) return;
     const timer = window.setTimeout(() => {
-      Promise.all([fetch('/api/me', { cache: 'no-store' }).then((response) => response.json()), refreshQueue(false)])
+      Promise.all([fetch('/api/me', { cache: 'no-store' }).then((response) => {
+        if (!response.ok) throw new Error('계정 정보를 불러오지 못했습니다.');
+        return response.json();
+      }), refreshQueue(false)])
         .then(([me]) => setProfile(me as Profile))
         .catch((cause) => setError(cause instanceof Error ? cause.message : '연결에 실패했습니다.'));
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [refreshQueue]);
+  }, [refreshQueue, registered]);
 
   useEffect(() => {
     if (!queued) return;
@@ -54,6 +58,10 @@ export default function LobbyClient() {
   }, [queued, refreshQueue]);
 
   async function changeQueue(action: 'join' | 'cancel') {
+    if (!registered) {
+      window.location.assign('/join');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -76,9 +84,10 @@ export default function LobbyClient() {
       <Tabs defaultValue="match" className="lobby-tabs">
         <LobbyHeader profile={profile} onProfileChange={setProfile} />
         <div className="lobby-main">
-          <TabsContent value="match"><MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} formation={formation} onQueue={changeQueue} onChooseFormation={() => setFormationOpen(true)} /></TabsContent>
+          {!registered && <p>로비에 오신 것을 환영해요. 대국 전에 <Link href="/join">닉네임 설정과 이용 동의</Link>를 완료해 주세요.</p>}
+          <TabsContent value="match"><MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} formation={formation} onQueue={changeQueue} onChooseFormation={() => registered ? setFormationOpen(true) : window.location.assign('/join')} /></TabsContent>
           <TabsContent value="review"><EmptyTab icon={History} eyebrow="GAME RECORDS" title="기보와 복기" text="완료한 대국의 수순을 다시 보고, 중요한 장면을 저장해 분석합니다." action="내 기보 보기" /></TabsContent>
-          <TabsContent value="friends"><CommunityTab /></TabsContent>
+          <TabsContent value="friends">{registered ? <CommunityTab /> : <EmptyTab icon={Users} eyebrow="FRIENDS" title="친구와 대국하기" text="닉네임 설정과 이용 동의를 완료하면 친구 기능을 사용할 수 있어요." action="계정 설정 완료하기" href="/join" />}</TabsContent>
           <TabsContent value="ai"><EmptyTab icon={Bot} eyebrow="TRAINING" title="컴퓨터와 두기" text="난이도와 진영을 선택하고 시간 제한 없이 새로운 수를 연습합니다." action="연습 대국 시작" href="/" /></TabsContent>
           <TabsContent value="shop"><EmptyTab icon={Gift} eyebrow="COLLECTION" title="상점과 이벤트" text="기물, 장기판, 포획 효과를 둘러보고 보유한 테마를 장착합니다." action="테마 둘러보기" /></TabsContent>
         </div>

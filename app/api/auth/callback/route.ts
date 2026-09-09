@@ -8,7 +8,7 @@ export async function GET(request: Request) {
     const client = await authClient();
     const { error } = await client.auth.exchangeCodeForSession(code);
     if (!error) {
-      const response = NextResponse.redirect(new URL('/join', url.origin));
+      const response = NextResponse.redirect(new URL('/lobby', url.origin));
       response.headers.set('Cache-Control', 'private, no-store');
       return response;
     }
