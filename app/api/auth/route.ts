@@ -14,8 +14,8 @@ export async function POST(request: Request) {
     const { data, error } = await client.auth.signInWithOAuth({
       provider: 'kakao',
       options: {
-        // Override Supabase's default Kakao scopes: this app only requests a nickname.
-        scopes: 'profile_nickname',
+        // `scopes` appends to Kakao defaults; the provider query parameter replaces them.
+        queryParams: { scope: 'profile_nickname' },
         redirectTo: new URL('/api/auth/callback', request.url).toString(),
         skipBrowserRedirect: true,
       },
