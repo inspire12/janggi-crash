@@ -9,7 +9,7 @@ import { createClient, type RealtimeChannel } from '@supabase/supabase-js';
 
 type Player = { id?: string; side?: Side; displayName?: string; elo?: number; rank?: { name: string; key: string } };
 type Payload = {
-  match: { id: string; status: 'active' | 'finished'; turn: Side; board: Piece[]; version: number; winnerSide: Side | null; resultReason: string | null; choTimeMs: number; hanTimeMs: number; clockSyncedAt: number; canTakeback: boolean; takebackRequested: boolean; takebackRequestedByMe: boolean; opponentAllowsTakeback: boolean };
+  match: { id: string; status: 'active' | 'finished'; turn: Side; board: Piece[]; version: number; winnerSide: Side | null; resultReason: string | null; choTimeMs: number; hanTimeMs: number; clockSyncedAt: number; periodMs: number; canTakeback: boolean; takebackRequested: boolean; takebackRequestedByMe: boolean; opponentAllowsTakeback: boolean };
   you: Player & { side: Side };
   opponent: Player;
 };
@@ -25,9 +25,12 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
   const [trialTurn, setTrialTurn] = useState<Side>('cho');
 
   const refresh = useCallback(async () => {
+    const started = performance.now();
     const response = await fetch(`/api/matches?id=${encodeURIComponent(matchId)}`, { cache: 'no-store' });
     const next = (await response.json()) as Payload & { error?: string };
     if (!response.ok) throw new Error(next.error ?? '대국을 불러오지 못했습니다.');
+    // Anchor server remaining time to a monotonic client clock, not the user's wall clock.
+    next.match.clockSyncedAt = (started + performance.now()) / 2;
     setData(next);
   }, [matchId]);
 
@@ -68,9 +71,23 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
     };
   }, [matchId, refresh]);
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    const timer = window.setInterval(() => setNow(performance.now()), 100);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (!data || data.match.status !== 'active') return;
+    let pending = false;
+    const timer = window.setInterval(() => {
+      const remaining = data.match.turn === 'cho' ? data.match.choTimeMs : data.match.hanTimeMs;
+      if (pending || performance.now() - data.match.clockSyncedAt < remaining) return;
+      pending = true;
+      void fetch('/api/matches', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ matchId, action: 'claim-timeout' }) })
+        .then(() => refresh())
+        .catch(() => {})
+        .finally(() => { pending = false; });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [data, matchId, refresh]);
   useEffect(() => {
     if (!illegalMove) return;
     const timer = window.setTimeout(() => {
@@ -92,7 +109,7 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
     if (!data) return 0;
     const base = side === 'cho' ? data.match.choTimeMs : data.match.hanTimeMs;
     const clientNow = now || data.match.clockSyncedAt;
-    return Math.max(0, base - (data.match.status === 'active' && data.match.turn === side ? clientNow - data.match.clockSyncedAt : 0));
+    return Math.max(0, base - (data.match.status === 'active' && data.match.turn === side ? Math.max(0, clientNow - data.match.clockSyncedAt) : 0));
   };
 
   function choose(piece: Piece) {
@@ -189,7 +206,7 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
         <Link className="text-btn" href="/lobby"><ArrowLeft size={15} /> 로비</Link>
       </header>
       <section className="online-match-layout">
-        <OnlinePlayer player={data.opponent} side={data.you.side === 'cho' ? 'han' : 'cho'} active={!isMyTurn && !result} label="상대" timeMs={clock(data.you.side === 'cho' ? 'han' : 'cho')} />
+        <OnlinePlayer player={data.opponent} side={data.you.side === 'cho' ? 'han' : 'cho'} active={!isMyTurn && !result} label="상대" timeMs={clock(data.you.side === 'cho' ? 'han' : 'cho')} periodMs={data.match.periodMs} />
         <div className="arena online-arena">
           <div className="turn-indicator"><span className={trialBoard ? trialTurn : data.match.turn} />{trialBoard ? `${trialTurn === 'cho' ? '초' : '한'} 시험 수` : result ?? (isMyTurn ? '당신의 차례' : '상대의 차례')}{trialBoard && <b className="trial-badge">둬보기</b>}</div>
           {data.match.takebackRequested && <div className="takeback-request">{data.match.takebackRequestedByMe ? <span>상대의 무르기 응답을 기다리고 있습니다.</span> : <><span>상대가 직전 수를 무르자고 요청했습니다.</span><div><button onClick={() => void matchAction('takeback-accept')}>수락</button><button onClick={() => void matchAction('takeback-reject')}>거절</button></div></>}</div>}
@@ -199,23 +216,26 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
             {displayBoard.map((piece) => <button key={piece.id} onClick={() => choose(piece)} className={`piece ${piece.side} piece-${piece.kind} ${['pawn', 'guard'].includes(piece.kind) ? 'piece-small' : piece.kind === 'king' ? 'piece-king' : 'piece-medium'} ${selected === piece.id ? 'selected' : ''}`} style={{ left: `${piece.x * 12.5}%`, top: `${piece.y * (100 / 9)}%` }}><span>{pieceLabel(piece)}</span></button>)}
             {result && <output className={`mate-banner ${data.match.winnerSide}`}><span>{data.match.resultReason === 'resign' ? 'RESIGN' : 'CHECKMATE'}</span><strong>{result}</strong><b>{result === '승리' ? '전적 반영 완료' : '다음 대국을 준비하세요'}</b></output>}
           </div></div>
-          <div className={`status-strip ${illegalMove ? 'illegal-status' : ''}`} aria-live="polite"><span className="status-dot" /><p>{error || (trialBoard ? '둬보기 중 · 실제 대국에는 반영되지 않습니다.' : result ? `대국 종료 · ${result}` : isMyTurn ? '기물을 선택해 수를 두세요.' : '상대의 수를 기다리고 있습니다.')}</p></div>
+          {(error || trialBoard) && <div className={`status-strip ${illegalMove ? 'illegal-status' : ''}`} aria-live="polite"><span className="status-dot" /><p>{error || '둬보기 중 · 실제 대국에는 반영되지 않습니다.'}</p></div>}
           {data.match.status === 'active' && <div className="battle-tools"><button title={data.match.opponentAllowsTakeback ? '상대에게 직전 수 무르기를 요청합니다.' : '상대가 무르기 요청을 받지 않습니다.'} disabled={sending || !data.match.canTakeback || data.match.takebackRequested || !data.match.opponentAllowsTakeback || Boolean(trialBoard)} onClick={() => void matchAction('takeback-request')}><Undo2 /> {data.match.opponentAllowsTakeback ? '무르기 요청' : '무르기 거부 중'}</button><button className={trialBoard ? 'active' : ''} disabled={sending || data.match.takebackRequested} onClick={toggleTrial}><FlaskConical /> {trialBoard ? '둬보기 종료' : '둬보기'}</button><button className="danger" disabled={sending || Boolean(trialBoard)} onClick={() => void resign()}><Flag /> 기권</button></div>}
         </div>
-        <OnlinePlayer player={data.you} side={data.you.side} active={Boolean(isMyTurn)} label="나" timeMs={clock(data.you.side)} />
+        <OnlinePlayer player={data.you} side={data.you.side} active={Boolean(isMyTurn)} label="나" timeMs={clock(data.you.side)} periodMs={data.match.periodMs} />
       </section>
       <BattleChat matchId={matchId} youId={data.you.id ?? ''} opponentId={data.opponent.id ?? ''} />
     </main>
   );
 }
 
-function OnlinePlayer({ player, side, active, label, timeMs }: { player: Player; side: Side; active: boolean; label: string; timeMs: number }) {
+function OnlinePlayer({ player, side, active, label, timeMs, periodMs }: { player: Player; side: Side; active: boolean; label: string; timeMs: number; periodMs: number }) {
+  const inByoyomi = periodMs > 0 && timeMs <= periodMs;
+  const displayMs = inByoyomi ? timeMs : Math.max(0, timeMs - periodMs);
   return <aside className={`player-card ${side}-card online-player ${active ? 'player-active' : ''}`}>
     <span className="side-label">{label} · {side === 'cho' ? '楚' : '漢'}</span>
     <div className="online-avatar"><Shield size={24} /></div>
     <h2>{player.displayName ?? '지휘관'}</h2>
     <div className="online-rating"><strong>{player.elo ?? 1200}</strong> ELO</div>
-    <div className={`battle-clock ${timeMs < 60000 ? 'clock-danger' : ''}`}>{formatClock(timeMs)}</div>
+    <div className={`battle-clock ${inByoyomi ? 'clock-danger' : ''}`}>{formatClock(displayMs)}</div>
+    <small>{inByoyomi ? '초읽기' : '생각시간'}</small>
     <p>{player.rank?.name ?? '18급'}</p>
   </aside>;
 }

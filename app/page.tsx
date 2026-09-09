@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { Flag, FlaskConical, RotateCcw, Sparkles, Swords, Undo2, Volume2, VolumeX } from 'lucide-react';
 import Link from 'next/link';
+import { formatClock, readClock, timeControls, type TimeControl } from '@/lib/game-clock';
 import JanggiBoardMarks from '@/components/janggi-board-marks';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -66,13 +67,61 @@ export default function Home() {
       label: string;
       tier: number;
     } | null>(null),
-    [status, setStatus] = useState('초의 기물을 선택하세요.');
+    [status, setStatus] = useState('');
   const [choFormation, setChoFormation] = useState<Formation>('horse-elephant-elephant-horse');
   const [hanFormation, setHanFormation] = useState<Formation>('elephant-horse-horse-elephant');
   const [setupOpen, setSetupOpen] = useState(true);
+  const [trialSnapshot, setTrialSnapshot] = useState<{ pieces: Piece[]; turn: Side; winner: Side | null; elapsedMs: number } | null>(null);
+  const [timeControl, setTimeControl] = useState<TimeControl>('standard');
+  const [clockView, setClockView] = useState({ cho: readClock(600_000, 0, 30_000), han: readClock(600_000, 0, 30_000) });
+  const clockBank = useRef({ cho: 600_000, han: 600_000 });
+  const turnStart = useRef(0);
+  const [resultLabel, setResultLabel] = useState('외통');
+  const periodMs = timeControls[timeControl].periodMs;
+  function clockFor(side: Side, at: number) {
+    const clockTurn = trialSnapshot?.turn ?? turn;
+    const elapsed = trialSnapshot?.elapsedMs ?? (turnStart.current > 0 ? Math.max(0, at - turnStart.current) : 0);
+    return readClock(clockBank.current[side], side === clockTurn ? elapsed : 0, periodMs);
+  }
+  function setClockNow(at: number) {
+    setClockView({ cho: clockFor('cho', at), han: clockFor('han', at) });
+  }
+  function settleClock() {
+    // Event handler only: sample the clock before accepting a move.
+    // oxlint-disable-next-line react/react-compiler
+    const now = performance.now();
+    const clock = clockFor(turn, now);
+    setClockNow(now);
+    if (clock.expired) {
+      setWinner(turn === 'cho' ? 'han' : 'cho');
+      setResultLabel('시간패');
+      setSelected(null);
+      setStatus('');
+      return false;
+    }
+    clockBank.current[turn] = clock.mainMs;
+    turnStart.current = 0;
+    return true;
+  }
+  useEffect(() => {
+    if (setupOpen || winner || motion || trialSnapshot) return;
+    const timer = window.setInterval(() => {
+      const now = performance.now();
+      setClockView({
+        cho: readClock(clockBank.current.cho, turn === 'cho' ? now - turnStart.current : 0, periodMs),
+        han: readClock(clockBank.current.han, turn === 'han' ? now - turnStart.current : 0, periodMs),
+      });
+      if (readClock(clockBank.current[turn], now - turnStart.current, periodMs).expired) {
+        setWinner(turn === 'cho' ? 'han' : 'cho');
+        setResultLabel('시간패');
+        setSelected(null);
+        setStatus('');
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [setupOpen, winner, motion, trialSnapshot, turn, periodMs]);
   const [illegalMove, setIllegalMove] = useState(false);
   const [history, setHistory] = useState<Array<{ pieces: Piece[]; turn: Side }>>([]);
-  const [trialSnapshot, setTrialSnapshot] = useState<{ pieces: Piece[]; turn: Side; winner: Side | null } | null>(null);
   const motionSequence = useRef(0);
   const selectedPiece = pieces.find((p) => p.id === selected);
   const targets = useMemo(
@@ -172,6 +221,7 @@ export default function Home() {
       (p) => p.x === x && p.y === y && p.side !== selectedPiece.side,
     );
     const nextPieces = applyMove(pieces, selectedPiece.id, { x, y });
+    if (!trialSnapshot && !settleClock()) return;
     if (!trialSnapshot) setHistory((current) => [...current, { pieces, turn }]);
     const nextTurn = turn === 'cho' ? 'han' : 'cho';
     const checkmate = isCheckmate(nextTurn, nextPieces);
@@ -195,6 +245,7 @@ export default function Home() {
         setPieces(nextPieces);
         if (checkmate) {
           setWinner(turn);
+          setResultLabel('외통');
           setImpact({ x, y, label: '외통!', tier: 6 });
           setStatus(`외통 — ${turn === 'cho' ? '초' : '한'}의 승리!`);
         } else if (victim) {
@@ -219,15 +270,19 @@ export default function Home() {
           setStatus(
             `장군! ${nextTurn === 'cho' ? '초' : '한'}의 궁이 공격받고 있습니다.`,
           );
-        } else setStatus(`${selectedPiece.name} 이동 완료.`);
+        } else setStatus('');
         setSelected(null);
         setTurn(nextTurn);
+        if (!trialSnapshot) turnStart.current = performance.now();
         setMotion(null);
       },
       victim ? 460 : 300,
     );
   }
   function reset() {
+    clockBank.current = { cho: timeControls[timeControl].mainMs, han: timeControls[timeControl].mainMs };
+    turnStart.current = 0;
+    setClockNow(0);
     motionSequence.current += 1;
     setPieces(createInitialPieces(choFormation, hanFormation));
     setSelected(null);
@@ -241,6 +296,10 @@ export default function Home() {
     setTrialSnapshot(null);
   }
   function startMatch() {
+    clockBank.current = { cho: timeControls[timeControl].mainMs, han: timeControls[timeControl].mainMs };
+    // oxlint-disable-next-line react/react-compiler
+    turnStart.current = performance.now();
+    setClockNow(turnStart.current);
     motionSequence.current += 1;
     setPieces(createInitialPieces(choFormation, hanFormation));
     setSelected(null);
@@ -256,6 +315,10 @@ export default function Home() {
   function takeback() {
     if (motion || trialSnapshot || history.length === 0) return;
     const previous = history[history.length - 1];
+    if (!winner && !settleClock()) return;
+    // oxlint-disable-next-line react/react-compiler
+    turnStart.current = performance.now();
+    setClockNow(turnStart.current);
     motionSequence.current += 1;
     setPieces(previous.pieces);
     setTurn(previous.turn);
@@ -268,6 +331,8 @@ export default function Home() {
   }
   function resign() {
     if (winner || motion || !window.confirm(`${turn === 'cho' ? '초' : '한'} 진영이 기권할까요?`)) return;
+    if (!trialSnapshot && !settleClock()) return;
+    setResultLabel('기권');
     setWinner(turn === 'cho' ? 'han' : 'cho');
     setSelected(null);
     setStatus(`${turn === 'cho' ? '초' : '한'}의 기권으로 ${turn === 'cho' ? '한' : '초'}가 승리했습니다.`);
@@ -275,6 +340,10 @@ export default function Home() {
   function toggleTrial() {
     if (motion || winner) return;
     if (trialSnapshot) {
+      // oxlint-disable-next-line react/react-compiler
+      const now = performance.now();
+      turnStart.current = now - trialSnapshot.elapsedMs;
+      setClockNow(now);
       setPieces(trialSnapshot.pieces);
       setTurn(trialSnapshot.turn);
       setWinner(trialSnapshot.winner);
@@ -284,7 +353,11 @@ export default function Home() {
       setStatus('실제 대국으로 돌아왔습니다.');
       return;
     }
-    setTrialSnapshot({ pieces, turn, winner });
+    // oxlint-disable-next-line react/react-compiler
+    const now = performance.now();
+    if (clockFor(turn, now).expired) { settleClock(); return; }
+    setClockNow(now);
+    setTrialSnapshot({ pieces, turn, winner, elapsedMs: Math.max(0, now - turnStart.current) });
     setSelected(null);
     setStatus('둬보기 중 · 시험한 수는 실제 대국에 반영되지 않습니다.');
   }
@@ -299,6 +372,8 @@ export default function Home() {
         onCho={setChoFormation}
         onHan={setHanFormation}
         onStart={startMatch}
+        timeControl={timeControl}
+        onTimeControl={setTimeControl}
       />
       <header className="topbar">
         <div className="brand">
@@ -335,7 +410,7 @@ export default function Home() {
         </div>
       </header>
       <section className="match-layout">
-        <Player side="han" active={turn === 'han'} />
+        <Player side="han" active={turn === 'han' && !winner && !setupOpen && !trialSnapshot} clock={clockView.han} />
         <div className="arena">
           <div className="turn-indicator">
             <span className={turn} />
@@ -405,27 +480,22 @@ export default function Home() {
               )}
               {winner && (
                 <output className={`mate-banner `}>
-                  <span>CHECKMATE</span>
-                  <strong>외통</strong>
+                  <strong>{resultLabel}</strong>
                   <b>{winner === 'cho' ? '초' : '한'} 승리</b>
                 </output>
               )}
             </div>
           </div>
-          <div className={`status-strip ${illegalMove ? 'illegal-status' : ''}`} aria-live="polite">
+          {illegalMove && <div className="status-strip illegal-status" aria-live="polite">
             <span className="status-dot" />
             <p>{status}</p>
-            <kbd>CLICK</kbd>
-          </div>
+          </div>}
         </div>
-        <Player side="cho" active={turn === 'cho'} />
+        <Player side="cho" active={turn === 'cho' && !winner && !setupOpen && !trialSnapshot} clock={clockView.cho} />
       </section>
       <footer>
         <span>
           연출 강도 <b>{cinema ? '시네마틱' : '절제'}</b>
-        </span>
-        <span className="hint">
-          <Sparkles size={14} /> 기물을 선택하면 실제 행마가 표시됩니다
         </span>
         <span>
           포획 <b>{32 - pieces.length}</b>
@@ -434,7 +504,7 @@ export default function Home() {
     </main>
   );
 }
-function FormationDialog({ open, cho, han, onCho, onHan, onStart }: { open: boolean; cho: Formation; han: Formation; onCho: (formation: Formation) => void; onHan: (formation: Formation) => void; onStart: () => void }) {
+function FormationDialog({ open, cho, han, onCho, onHan, onStart, timeControl, onTimeControl }: { open: boolean; cho: Formation; han: Formation; onCho: (formation: Formation) => void; onHan: (formation: Formation) => void; onStart: () => void; timeControl: TimeControl; onTimeControl: (value: TimeControl) => void }) {
   return <Dialog open={open} onOpenChange={() => {}}>
     <DialogContent className="formation-dialog" showCloseButton={false}>
       <DialogHeader>
@@ -444,6 +514,9 @@ function FormationDialog({ open, cho, han, onCho, onHan, onStart }: { open: bool
       </DialogHeader>
       <FormationSide side="han" value={han} onChange={onHan} />
       <FormationSide side="cho" value={cho} onChange={onCho} />
+      <fieldset className="formation-side"><legend>대국 시간</legend><div className="formation-options">
+        {(Object.keys(timeControls) as TimeControl[]).map((value) => <button type="button" key={value} aria-pressed={timeControl === value} className={timeControl === value ? 'selected' : ''} onClick={() => onTimeControl(value)}>{timeControls[value].label}</button>)}
+      </div></fieldset>
       <button className="formation-start" onClick={onStart}><Swords size={18} /> 이 포진으로 대국 시작</button>
     </DialogContent>
   </Dialog>;
@@ -459,7 +532,7 @@ function FormationSide({ side, value, onChange }: { side: Side; value: Formation
     </div>
   </fieldset>;
 }
-function Player({ side, active }: { side: Side; active: boolean }) {
+function Player({ side, active, clock }: { side: Side; active: boolean; clock: ReturnType<typeof readClock> }) {
   const cho = side === 'cho';
   return (
     <aside className={`player-card ${side}-card`}>
@@ -469,9 +542,9 @@ function Player({ side, active }: { side: Side; active: boolean }) {
       </div>
       <div className={`avatar ${side}-avatar`}>{cho ? '楚' : '漢'}</div>
       <div className={`clock ${active ? 'active-clock' : ''}`}>
-        {cho ? '10:00' : '09:42'}
+        {formatClock(clock.inByoyomi ? clock.periodMs : clock.mainMs)}
       </div>
-      <p>{active ? '당신의 차례입니다' : '상대가 생각하는 중'}</p>
+      <p>{clock.inByoyomi ? '초읽기' : '생각시간'}</p>
     </aside>
   );
 }

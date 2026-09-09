@@ -26,7 +26,7 @@ jobs:
       - run: npm ci
       - run: npm run lint:app
       - run: npm run typecheck
-      - run: node --experimental-strip-types --test tests/game-record.test.mjs
+      - run: node --experimental-strip-types --experimental-vm-modules --test tests/*.test.mjs
       - run: npm run build
 
   supabase:

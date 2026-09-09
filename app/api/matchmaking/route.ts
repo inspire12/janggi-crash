@@ -2,6 +2,7 @@ import { getAppUser } from '@/app/auth';
 import { getDatabase } from '@/db';
 import { getPlayer } from '@/db/players';
 import { createInitialPieces, isFormation, type Formation } from '@/lib/janggi';
+import { timeControls, type TimeControl } from '@/lib/game-clock';
 
 type ActiveMatch = { id: string };
 type QueueOpponent = { user_id: string; elo: number; formation: string };
@@ -21,16 +22,16 @@ export async function GET() {
     .bind(user.userId, user.userId)
     .first<ActiveMatch>();
   const queued = await db
-    .prepare('SELECT user_id FROM matchmaking_queue WHERE user_id = ?')
+    .prepare('SELECT user_id, time_control FROM matchmaking_queue WHERE user_id = ?')
     .bind(user.userId)
-    .first();
-  return Response.json({ matchId: active?.id ?? null, queued: Boolean(queued) });
+    .first<{ user_id: string; time_control: TimeControl }>();
+  return Response.json({ matchId: active?.id ?? null, queued: Boolean(queued), timeControl: queued?.time_control ?? null });
 }
 
 export async function POST(request: Request) {
   const user = await getAppUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
-  const body = (await request.json().catch(() => ({}))) as { action?: string; formation?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { action?: string; formation?: unknown; timeControl?: unknown };
   const profile = await getPlayer(user.userId);
   if (!profile || profile.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   const db = getDatabase();
@@ -47,6 +48,9 @@ export async function POST(request: Request) {
     return Response.json({ error: '올바른 포진을 선택해 주세요.' }, { status: 400 });
   }
   const formation: Formation = body.formation;
+  const timeControl = body.timeControl ?? 'standard';
+  if (timeControl !== 'standard' && timeControl !== 'blitz') return Response.json({ error: '올바른 대국 시간을 선택해 주세요.' }, { status: 400 });
+  const { mainMs } = timeControls[timeControl as TimeControl];
 
   const active = await db
     .prepare(
@@ -61,20 +65,20 @@ export async function POST(request: Request) {
   const opponent = await db
     .prepare(
       `SELECT user_id, elo, formation FROM matchmaking_queue
-       WHERE user_id != ?
+       WHERE user_id != ? AND time_control = ?
        ORDER BY ABS(elo - ?), joined_at
        LIMIT 1`,
     )
-    .bind(user.userId, profile.elo)
+    .bind(user.userId, timeControl, profile.elo)
     .first<QueueOpponent>();
   if (!opponent) {
     await db
       .prepare(
-        `INSERT INTO matchmaking_queue (user_id, elo, formation, joined_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(user_id) DO UPDATE SET elo = excluded.elo, formation = excluded.formation, joined_at = excluded.joined_at`,
+        `INSERT INTO matchmaking_queue (user_id, elo, formation, joined_at, time_control)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET elo = excluded.elo, formation = excluded.formation, joined_at = excluded.joined_at, time_control = excluded.time_control`,
       )
-      .bind(user.userId, profile.elo, formation, Date.now())
+      .bind(user.userId, profile.elo, formation, Date.now(), timeControl)
       .run();
     return Response.json({ queued: true, matchId: null });
   }
@@ -96,10 +100,10 @@ export async function POST(request: Request) {
         `INSERT INTO matches
          (id, cho_user_id, han_user_id, status, turn, board_json, version,
           cho_time_ms, han_time_ms, turn_started_at, created_at, updated_at,
-          initial_board_json, cho_formation, han_formation, rules_version)
-         VALUES (?, ?, ?, 'active', 'cho', ?, 0, 600000, 600000, ?, ?, ?, ?, ?, ?, 'janggi-clash-v1')`,
+          initial_board_json, cho_formation, han_formation, rules_version, time_control)
+         VALUES (?, ?, ?, 'active', 'cho', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, 'janggi-clash-v2', ?)`,
       )
-      .bind(matchId, cho, han, initialBoard, now, now, now, initialBoard, choFormation, hanFormation),
+      .bind(matchId, cho, han, initialBoard, mainMs, mainMs, now, now, now, initialBoard, choFormation, hanFormation, timeControl),
     db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(user.userId),
     db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(opponent.user_id),
   ]);

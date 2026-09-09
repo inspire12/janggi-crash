@@ -4,6 +4,7 @@ import { getPlayer, type PlayerProfile } from '@/db/players';
 import { applyMove, isCheckmate, legalMoves, type Piece, type Side } from '@/lib/janggi';
 import { eloChange, rankForElo } from '@/lib/rating';
 import { publishMatchEvent } from '@/lib/supabase-events';
+import { readClock, timeControls } from '@/lib/game-clock';
 
 type MatchRow = {
   id: string;
@@ -25,6 +26,7 @@ type MatchRow = {
   turn_started_at: number;
   created_at: number;
   updated_at: number;
+  time_control: 'legacy' | 'standard' | 'blitz';
 };
 
 async function ownedMatch(matchId: string, userId: string) {
@@ -34,7 +36,7 @@ async function ownedMatch(matchId: string, userId: string) {
               previous_board_json, previous_turn, previous_cho_time_ms,
               previous_han_time_ms, takeback_requested_by, version,
               winner_user_id, result_reason, cho_time_ms, han_time_ms,
-              turn_started_at, created_at, updated_at
+              turn_started_at, created_at, updated_at, time_control
        FROM matches
        WHERE id = ? AND (cho_user_id = ? OR han_user_id = ?)`,
     )
@@ -66,8 +68,12 @@ export async function GET(request: Request) {
   const side: Side = match.cho_user_id === user.userId ? 'cho' : 'han';
   const now = Date.now();
   const elapsed = match.status === 'active' ? Math.max(0, now - match.turn_started_at) : 0;
-  const choTimeMs = Math.max(0, match.cho_time_ms - (match.turn === 'cho' ? elapsed : 0));
-  const hanTimeMs = Math.max(0, match.han_time_ms - (match.turn === 'han' ? elapsed : 0));
+  const periodMs = match.time_control === 'legacy' ? 0 : timeControls[match.time_control].periodMs;
+  const choClock = readClock(match.cho_time_ms, match.turn === 'cho' ? elapsed : 0, periodMs);
+  const hanClock = readClock(match.han_time_ms, match.turn === 'han' ? elapsed : 0, periodMs);
+  // Transmit remaining total allowance so clients can render the main/period boundary smoothly.
+  const choTimeMs = choClock.mainMs + (match.status === 'active' ? choClock.periodMs : 0);
+  const hanTimeMs = hanClock.mainMs + (match.status === 'active' ? hanClock.periodMs : 0);
   const presentPlayer = (profile: PlayerProfile | null) => ({
     id: profile?.id,
     displayName: profile?.display_name ?? '지휘관',
@@ -90,6 +96,8 @@ export async function GET(request: Request) {
       resultReason: match.result_reason,
       choTimeMs,
       hanTimeMs,
+      periodMs: match.status === 'active' ? periodMs : 0,
+      timeControl: match.time_control,
       clockSyncedAt: now,
       updatedAt: match.updated_at,
       canTakeback: Boolean(match.previous_board_json),
@@ -109,7 +117,7 @@ export async function POST(request: Request) {
   if (!account || account.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   const body = (await request.json().catch(() => ({}))) as {
     matchId?: string;
-    action?: 'move' | 'resign' | 'takeback-request' | 'takeback-accept' | 'takeback-reject';
+    action?: 'move' | 'resign' | 'takeback-request' | 'takeback-accept' | 'takeback-reject' | 'claim-timeout';
     pieceId?: string;
     to?: { x?: number; y?: number };
     version?: number;
@@ -121,6 +129,16 @@ export async function POST(request: Request) {
   }
   const side: Side = match.cho_user_id === user.userId ? 'cho' : 'han';
   const opponentId = side === 'cho' ? match.han_user_id : match.cho_user_id;
+  const periodMs = match.time_control === 'legacy' ? 0 : timeControls[match.time_control].periodMs;
+  const activeClock = readClock(match.turn === 'cho' ? match.cho_time_ms : match.han_time_ms, Date.now() - match.turn_started_at, periodMs);
+  if (activeClock.expired) {
+    const loserId = match.turn === 'cho' ? match.cho_user_id : match.han_user_id;
+    const winnerId = match.turn === 'cho' ? match.han_user_id : match.cho_user_id;
+    const finished = await finishMatch(match, winnerId, loserId, 'timeout');
+    if (finished) await publishMatchEvent(match.id, match.version + 1, 'timeout');
+    return Response.json(finished ? { ok: true, finished: true } : { error: '대국 상태가 변경되었습니다.' }, { status: finished ? 200 : 409 });
+  }
+  if (body.action === 'claim-timeout') return Response.json({ error: '아직 제한시간이 남아 있습니다.' }, { status: 409 });
   if (body.action === 'resign') {
     const finished = await finishMatch(match, opponentId, user.userId, 'resign');
     if (finished) await publishMatchEvent(match.id, match.version + 1, 'resign');
@@ -195,7 +213,7 @@ export async function POST(request: Request) {
   const elapsed = Math.max(0, now - match.turn_started_at);
   const choTimeMs = Math.max(0, match.cho_time_ms - (side === 'cho' ? elapsed : 0));
   const hanTimeMs = Math.max(0, match.han_time_ms - (side === 'han' ? elapsed : 0));
-  if ((side === 'cho' ? choTimeMs : hanTimeMs) === 0) {
+  if (readClock(side === 'cho' ? match.cho_time_ms : match.han_time_ms, elapsed, periodMs).expired) {
     const finished = await finishMatch(match, opponentId, user.userId, 'timeout');
     if (finished) await publishMatchEvent(match.id, match.version + 1, 'timeout');
     return Response.json({ error: '제한시간이 종료되었습니다.' }, { status: 409 });

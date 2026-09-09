@@ -13,10 +13,11 @@ export async function GET(request: Request) {
   }
   return getDatabase().transaction(async db => {
     const match = await db.prepare(`SELECT id, initial_board_json, cho_formation, han_formation,
-      rules_version, record_seq FROM matches WHERE id = ? AND (cho_user_id = ? OR han_user_id = ?) FOR SHARE`)
+      rules_version, record_seq, time_control FROM matches WHERE id = ? AND (cho_user_id = ? OR han_user_id = ?) FOR SHARE`)
       .bind(id, user.userId, user.userId).first<{
         id: string; initial_board_json: string | null; cho_formation: string | null;
         han_formation: string | null; rules_version: string | null; record_seq: number;
+        time_control: string;
       }>();
     if (!match) return Response.json({ error: '기보를 찾을 수 없습니다.' }, { status: 404 });
     const rows = await db.prepare(`SELECT seq,kind,details,state,created_at FROM game_record_events
@@ -26,6 +27,7 @@ export async function GET(request: Request) {
       format: 'janggi-clash-record', formatVersion: 1, matchId: id,
       completeness: match.initial_board_json ? 'complete' : 'checkpoint-only',
       rulesVersion: match.rules_version,
+      timeControl: match.time_control,
       formations: { cho: match.cho_formation, han: match.han_formation },
       initialBoard: match.initial_board_json ? JSON.parse(match.initial_board_json) : null,
       latestSeq: match.record_seq, events,

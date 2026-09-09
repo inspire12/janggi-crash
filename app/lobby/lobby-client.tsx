@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { formations, type Formation } from '@/lib/janggi';
 import { Switch } from '@/components/ui/switch';
+import { timeControls, type TimeControl } from '@/lib/game-clock';
 
 type Profile = { email: string; displayName: string; elo: number; wins: number; losses: number; draws: number; streak: number; games: number; winRate: number; allowTakebackRequests: boolean; rank: { name: string; key: string } };
 
@@ -28,11 +29,13 @@ export default function LobbyClient({ registered }: { registered: boolean }) {
   const [error, setError] = useState('');
   const [formation, setFormation] = useState<Formation>('horse-elephant-elephant-horse');
   const [formationOpen, setFormationOpen] = useState(false);
+  const [timeControl, setTimeControl] = useState<TimeControl>('standard');
 
   const refreshQueue = useCallback(async (enterMatchedGame = false) => {
     const response = await fetch('/api/matchmaking', { cache: 'no-store' });
     if (!response.ok) throw new Error('대기열 상태를 불러오지 못했습니다.');
-    const data = (await response.json()) as { queued: boolean; matchId: string | null };
+    const data = (await response.json()) as { queued: boolean; matchId: string | null; timeControl: TimeControl | null };
+    if (data.timeControl) setTimeControl(data.timeControl);
     if (data.matchId && enterMatchedGame) window.location.assign(`/battle/${data.matchId}`);
     setMatchId(data.matchId);
     setQueued(data.queued);
@@ -65,7 +68,7 @@ export default function LobbyClient({ registered }: { registered: boolean }) {
     setBusy(true);
     setError('');
     try {
-      const response = await fetch('/api/matchmaking', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, formation }) });
+      const response = await fetch('/api/matchmaking', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, formation, timeControl }) });
       const data = (await response.json()) as { queued?: boolean; matchId?: string; error?: string };
       if (!response.ok) throw new Error(data.error ?? '요청에 실패했습니다.');
       if (data.matchId) return window.location.assign(`/battle/${data.matchId}`);
@@ -85,7 +88,10 @@ export default function LobbyClient({ registered }: { registered: boolean }) {
         <LobbyHeader profile={profile} onProfileChange={setProfile} />
         <div className="lobby-main">
           {!registered && <p>로비에 오신 것을 환영해요. 대국 전에 <Link href="/join">닉네임 설정과 이용 동의</Link>를 완료해 주세요.</p>}
-          <TabsContent value="match"><MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} formation={formation} onQueue={changeQueue} onChooseFormation={() => registered ? setFormationOpen(true) : window.location.assign('/join')} /></TabsContent>
+          <TabsContent value="match">
+            <fieldset className="formation-side" disabled={queued || busy || Boolean(matchId)}><legend>대국 시간</legend><div className="formation-options">{(Object.keys(timeControls) as TimeControl[]).map((value) => <button type="button" key={value} aria-pressed={timeControl === value} className={timeControl === value ? 'selected' : ''} onClick={() => setTimeControl(value)}>{timeControls[value].label}</button>)}</div></fieldset>
+            <MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} formation={formation} onQueue={changeQueue} onChooseFormation={() => registered ? setFormationOpen(true) : window.location.assign('/join')} />
+          </TabsContent>
           <TabsContent value="review"><EmptyTab icon={History} eyebrow="GAME RECORDS" title="기보와 복기" text="완료한 대국의 수순을 다시 보고, 중요한 장면을 저장해 분석합니다." action="내 기보 보기" /></TabsContent>
           <TabsContent value="friends">{registered ? <CommunityTab /> : <EmptyTab icon={Users} eyebrow="FRIENDS" title="친구와 대국하기" text="닉네임 설정과 이용 동의를 완료하면 친구 기능을 사용할 수 있어요." action="계정 설정 완료하기" href="/join" />}</TabsContent>
           <TabsContent value="ai"><EmptyTab icon={Bot} eyebrow="TRAINING" title="컴퓨터와 두기" text="난이도와 진영을 선택하고 시간 제한 없이 새로운 수를 연습합니다." action="연습 대국 시작" href="/" /></TabsContent>
