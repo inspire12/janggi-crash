@@ -89,15 +89,17 @@ export async function POST(request: Request) {
   const choFormation = userIsCho ? formation : opponentFormation;
   const hanFormation = userIsCho ? opponentFormation : formation;
   const now = Date.now();
+  const initialBoard = JSON.stringify(createInitialPieces(choFormation, hanFormation));
   await db.batch([
     db
       .prepare(
         `INSERT INTO matches
          (id, cho_user_id, han_user_id, status, turn, board_json, version,
-          cho_time_ms, han_time_ms, turn_started_at, created_at, updated_at)
-         VALUES (?, ?, ?, 'active', 'cho', ?, 0, 600000, 600000, ?, ?, ?)`,
+          cho_time_ms, han_time_ms, turn_started_at, created_at, updated_at,
+          initial_board_json, cho_formation, han_formation, rules_version)
+         VALUES (?, ?, ?, 'active', 'cho', ?, 0, 600000, 600000, ?, ?, ?, ?, ?, ?, 'janggi-clash-v1')`,
       )
-      .bind(matchId, cho, han, JSON.stringify(createInitialPieces(choFormation, hanFormation)), now, now, now),
+      .bind(matchId, cho, han, initialBoard, now, now, now, initialBoard, choFormation, hanFormation),
     db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(user.userId),
     db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(opponent.user_id),
   ]);

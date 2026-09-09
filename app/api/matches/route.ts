@@ -124,7 +124,7 @@ export async function POST(request: Request) {
   if (body.action === 'resign') {
     const finished = await finishMatch(match, opponentId, user.userId, 'resign');
     if (finished) await publishMatchEvent(match.id, match.version + 1, 'resign');
-    return Response.json({ ok: true, finished: true });
+    return Response.json(finished ? { ok: true, finished: true } : { error: '대국 상태가 변경되었습니다.' }, { status: finished ? 200 : 409 });
   }
   if (body.action === 'takeback-request') {
     if (!match.previous_board_json) return Response.json({ error: '무를 수 있는 수가 없습니다.' }, { status: 409 });
@@ -165,9 +165,9 @@ export async function POST(request: Request) {
        previous_board_json = NULL, previous_turn = NULL,
        previous_cho_time_ms = NULL, previous_han_time_ms = NULL,
        takeback_requested_by = NULL, version = version + 1,
-       turn_started_at = ?, updated_at = ?
-       WHERE id = ? AND version = ? AND takeback_requested_by = ?`,
-    ).bind(now, now, match.id, match.version, match.takeback_requested_by).run();
+       turn_started_at = ?, updated_at = ?, record_context = ?::jsonb
+       WHERE id = ? AND version = ? AND status = 'active' AND takeback_requested_by = ?`,
+    ).bind(now, now, JSON.stringify({ kind: 'takeback', actorUserId: user.userId, requestedBy: match.takeback_requested_by }), match.id, match.version, match.takeback_requested_by).run();
     if (result.meta.changes !== 1) return Response.json({ error: '대국 상태가 변경되었습니다.' }, { status: 409 });
     await publishMatchEvent(match.id, match.version + 1, 'takeback-accept');
     return Response.json({ ok: true });
@@ -209,7 +209,7 @@ export async function POST(request: Request) {
            cho_time_ms = ?, han_time_ms = ?, turn_started_at = ?,
            previous_board_json = ?, previous_turn = ?,
            previous_cho_time_ms = ?, previous_han_time_ms = ?,
-           takeback_requested_by = NULL
+           takeback_requested_by = NULL, record_context = ?::jsonb
        WHERE id = ? AND version = ? AND status = 'active'`,
     )
     .bind(
@@ -226,6 +226,10 @@ export async function POST(request: Request) {
       match.turn,
       match.cho_time_ms,
       match.han_time_ms,
+      JSON.stringify({ kind: 'move', actorUserId: user.userId, pieceId: piece.id,
+        from: { x: piece.x, y: piece.y }, to,
+        capturedPiece: pieces.find(item => item.x === to.x && item.y === to.y) ?? null,
+        checkmate }),
       match.id,
       match.version,
     );
@@ -247,13 +251,19 @@ export async function POST(request: Request) {
 
 async function finishMatch(match: MatchRow, winnerId: string, loserId: string, reason: string) {
   const db = getDatabase();
+  const now = Date.now();
+  const elapsed = Math.max(0, now - match.turn_started_at);
+  const choTimeMs = Math.max(0, match.cho_time_ms - (match.turn === 'cho' ? elapsed : 0));
+  const hanTimeMs = Math.max(0, match.han_time_ms - (match.turn === 'han' ? elapsed : 0));
   const update = db
       .prepare(
         `UPDATE matches SET status = 'finished', winner_user_id = ?,
-         result_reason = ?, version = version + 1, updated_at = ?
-         WHERE id = ? AND status = 'active'`,
+         result_reason = ?, version = version + 1, updated_at = ?,
+         cho_time_ms = ?, han_time_ms = ?, record_context = ?::jsonb
+         WHERE id = ? AND status = 'active' AND version = ?`,
       )
-      .bind(winnerId, reason, Date.now(), match.id);
+      .bind(winnerId, reason, now, choTimeMs, hanTimeMs,
+        JSON.stringify({ kind: reason, actorUserId: loserId }), match.id, match.version);
   const [result] = await db.batch([update, ...await ratingStatements(winnerId, loserId)], true);
   return result.meta.changes === 1;
 }
