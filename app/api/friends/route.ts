@@ -1,9 +1,9 @@
-import { getChatGPTUser } from '@/app/chatgpt-auth';
+import { getAppUser } from '@/app/auth';
 import { getDatabase } from '@/db';
 import { getPlayer } from '@/db/players';
 
 async function currentAccount() {
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return null;
   const profile = await getPlayer(user.userId);
   return profile?.terms_accepted_at ? { user, profile } : null;

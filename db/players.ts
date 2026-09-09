@@ -1,4 +1,4 @@
-import type { ChatGPTUser } from '@/app/chatgpt-auth';
+import type { AppUser } from '@/app/auth';
 import { getDatabase } from './index';
 
 export type PlayerProfile = {
@@ -25,7 +25,7 @@ export async function getPlayer(userId: string) {
     .first<PlayerProfile>();
 }
 
-export async function createPlayer(user: ChatGPTUser, displayName: string) {
+export async function createPlayer(user: AppUser, displayName: string) {
   const db = getDatabase();
   const now = Date.now();
   const result = await db

@@ -1,10 +1,10 @@
-import { getChatGPTUser } from '@/app/chatgpt-auth';
+import { getAppUser } from '@/app/auth';
 import { getPlayer } from '@/db/players';
 import { getDatabase } from '@/db';
 import { rankForElo } from '@/lib/rating';
 
 export async function GET() {
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
   const profile = await getPlayer(user.userId);
   if (!profile || profile.terms_accepted_at === 0) return Response.json({ registered: false }, { status: 404 });
@@ -27,7 +27,7 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
   const profile = await getPlayer(user.userId);
   if (!profile || profile.terms_accepted_at === 0) {

@@ -1,8 +1,8 @@
-import { getChatGPTUser } from '@/app/chatgpt-auth';
+import { getAppUser } from '@/app/auth';
 import { createPlayer, getPlayer } from '@/db/players';
 
 export async function GET() {
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return Response.json({ authenticated: false, registered: false });
   const profile = await getPlayer(user.userId);
   return Response.json({
@@ -14,8 +14,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: 'ChatGPT 로그인이 필요합니다.' }, { status: 401 });
+  const user = await getAppUser();
+  if (!user) return Response.json({ error: '계정 로그인이 필요합니다.' }, { status: 401 });
   const body = (await request.json().catch(() => ({}))) as {
     displayName?: string;
     termsAccepted?: boolean;

@@ -1,4 +1,4 @@
-import { getChatGPTUser } from '@/app/chatgpt-auth';
+import { getAppUser } from '@/app/auth';
 import { getDatabase } from '@/db';
 import { getPlayer, type PlayerProfile } from '@/db/players';
 import { applyMove, isCheckmate, legalMoves, type Piece, type Side } from '@/lib/janggi';
@@ -54,7 +54,7 @@ async function player(id: string) {
 }
 
 export async function GET(request: Request) {
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
   const account = await getPlayer(user.userId);
   if (!account || account.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
@@ -103,7 +103,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
   const account = await getPlayer(user.userId);
   if (!account || account.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
@@ -236,26 +236,25 @@ export async function POST(request: Request) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(match.id, match.version + 1, user.userId, piece.id, piece.x, piece.y, to.x, to.y, now);
-  const results = await db.batch([update, move]);
+  const ratings = checkmate ? await ratingStatements(user.userId, opponentId) : [];
+  const results = await db.batch([update, move, ...ratings], true);
   if (!results[0].success || results[0].meta.changes !== 1) {
     return Response.json({ error: '상대 수가 먼저 반영되었습니다. 새로고침합니다.' }, { status: 409 });
   }
-  if (checkmate) await db.batch(await ratingStatements(user.userId, opponentId));
   await publishMatchEvent(match.id, match.version + 1, checkmate ? 'checkmate' : 'move');
   return Response.json({ ok: true, checkmate, version: match.version + 1 });
 }
 
 async function finishMatch(match: MatchRow, winnerId: string, loserId: string, reason: string) {
   const db = getDatabase();
-  const result = await db
+  const update = db
       .prepare(
         `UPDATE matches SET status = 'finished', winner_user_id = ?,
          result_reason = ?, version = version + 1, updated_at = ?
          WHERE id = ? AND status = 'active'`,
       )
-      .bind(winnerId, reason, Date.now(), match.id)
-      .run();
-  if (result.meta.changes === 1) await db.batch(await ratingStatements(winnerId, loserId));
+      .bind(winnerId, reason, Date.now(), match.id);
+  const [result] = await db.batch([update, ...await ratingStatements(winnerId, loserId)], true);
   return result.meta.changes === 1;
 }
 
@@ -273,7 +272,7 @@ async function ratingStatements(winnerId: string, loserId: string) {
       .bind(delta, Date.now(), winnerId),
     db
       .prepare(
-        `UPDATE players SET elo = MAX(100, elo - ?), losses = losses + 1,
+        `UPDATE players SET elo = GREATEST(100, elo - ?), losses = losses + 1,
          streak = CASE WHEN streak <= 0 THEN streak - 1 ELSE -1 END, updated_at = ?
          WHERE id = ?`,
       )

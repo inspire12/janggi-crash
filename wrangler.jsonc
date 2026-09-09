@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "janggi-crash",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "no_bundle": true,
+  "build": { "command": "npm run build" },
+  "assets": { "directory": "dist/client" },
+  "rules": [{ "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }]
+}

@@ -37,7 +37,7 @@ export async function publishMatchEvent(matchId: string, version: number, event:
     );
     return response.ok;
   } catch {
-    // Realtime is an acceleration layer. D1 remains authoritative and clients
+    // Realtime is an acceleration layer. PostgreSQL remains authoritative and clients
     // retain a polling fallback, so a relay outage must never reject a move.
     return false;
   }

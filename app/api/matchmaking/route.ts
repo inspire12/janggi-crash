@@ -1,4 +1,4 @@
-import { getChatGPTUser } from '@/app/chatgpt-auth';
+import { getAppUser } from '@/app/auth';
 import { getDatabase } from '@/db';
 import { getPlayer } from '@/db/players';
 import { createInitialPieces, isFormation, type Formation } from '@/lib/janggi';
@@ -7,7 +7,7 @@ type ActiveMatch = { id: string };
 type QueueOpponent = { user_id: string; elo: number; formation: string };
 
 export async function GET() {
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
   const profile = await getPlayer(user.userId);
   if (!profile || profile.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
@@ -28,13 +28,14 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const user = await getChatGPTUser();
+  const user = await getAppUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
   const body = (await request.json().catch(() => ({}))) as { action?: string; formation?: unknown };
   const profile = await getPlayer(user.userId);
   if (!profile || profile.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   const db = getDatabase();
 
+  return db.transaction(async db => {
   if (body.action === 'cancel') {
     await db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(user.userId).run();
     return Response.json({ queued: false, matchId: null });
@@ -101,4 +102,5 @@ export async function POST(request: Request) {
     db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(opponent.user_id),
   ]);
   return Response.json({ queued: false, matchId });
+  }, 736421);
 }

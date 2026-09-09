@@ -128,7 +128,7 @@ function ProfileSheet({ profile, onProfileChange }: { profile: Profile | null; o
     <nav className="sheet-menu"><button><CircleUserRound /><span>프로필 및 개인정보</span><ChevronRight /></button><button><Trophy /><span>전적과 계급</span><ChevronRight /></button><button><Settings /><span>환경설정</span><ChevronRight /></button></nav>
     {/* Dispatch-owned authentication requires a top-level anchor navigation. */}
     {/* oxlint-disable-next-line next/no-html-link-for-pages */}
-    <a className="sheet-signout" href="/signout-with-chatgpt?return_to=/" target="_top"><LogOut /> 로그아웃</a>
+    <button className="sheet-signout" onClick={async () => { const response = await fetch('/api/auth', { method: 'DELETE' }); if (response.ok) window.location.assign('/'); }}><LogOut /> 로그아웃</button>
   </SheetContent>;
 }
 
