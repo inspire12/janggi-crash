@@ -9,7 +9,6 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 const localBindingConfig = {
   name: 'janggi-crash',
   main: 'vinext/server/fetch-handler',
-  compatibility_flags: ['nodejs_compat'],
   workers_dev: true,
 };
 
