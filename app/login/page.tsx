@@ -1,9 +1,10 @@
 import LoginForm from './login-form';
 
-export default function LoginPage() {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  const { error } = await searchParams;
   return <main className="join-shell"><section className="join-card">
     <h1>장기: 격돌 로그인</h1>
-    <p className="join-intro">이메일로 받은 인증번호로 가입하고 로그인하세요. 비밀번호는 필요하지 않습니다.</p>
-    <LoginForm />
+    <p className="join-intro">카카오 계정으로 간편하게 시작하세요.</p>
+    <LoginForm failed={Boolean(error)} />
   </section></main>;
 }

@@ -1,28 +1,25 @@
 'use client';
 import { useState } from 'react';
 
-export default function LoginForm() {
-  const [email, setEmail] = useState('');
-  const [token, setToken] = useState('');
-  const [sent, setSent] = useState(false);
+export default function LoginForm({ failed = false }: { failed?: boolean }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError('');
+  const [error, setError] = useState(failed ? '카카오 로그인을 완료하지 못했습니다. 다시 시도해 주세요.' : '');
+  async function login() {
+    setBusy(true); setError('');
     try {
-      const response = await fetch('/api/auth', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, token: sent ? token : undefined }) });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error || '로그인에 실패했습니다.');
-      if (sent) window.location.assign('/join');
-      else setSent(true);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '요청에 실패했습니다.'); }
-    finally { setBusy(false); }
+      const response = await fetch('/api/auth', { method: 'POST' });
+      const result = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !result.url) throw new Error(result.error ?? '로그인을 시작하지 못했습니다.');
+      window.location.assign(result.url);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '로그인 연결에 실패했습니다.');
+      setBusy(false);
+    }
   }
-  return <form className="join-form" onSubmit={submit}>
-    <label>이메일<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required disabled={sent} /></label>
-    {sent && <label>인증번호<input inputMode="numeric" autoComplete="one-time-code" value={token} onChange={e => setToken(e.target.value)} pattern="[0-9]{6,10}" required /></label>}
+  return <div className="join-form">
     {error && <p className="form-error" role="alert">{error}</p>}
-    <button className="match-button" disabled={busy}>{busy ? '처리 중…' : sent ? '로그인' : '인증번호 받기'}</button>
-    {sent && <button type="button" onClick={() => { setSent(false); setToken(''); }}>이메일 변경 / 다시 보내기</button>}
-  </form>;
+    <button className="match-button" style={{ background: '#FEE500', color: '#191919' }} disabled={busy} onClick={() => void login()}>
+      {busy ? '카카오 연결 중…' : '카카오로 시작하기'}
+    </button>
+  </div>;
 }

@@ -30,7 +30,7 @@ export default function JoinForm({ email, initialName }: { email: string; initia
 
   return (
     <form className="join-form" onSubmit={submit}>
-      <label><span>연결된 계정</span><input value={email} disabled /></label>
+      <label><span>연결된 계정</span><input value={email || '카카오 계정'} disabled /></label>
       <label><span>게임 닉네임</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} minLength={2} maxLength={16} autoComplete="off" required /></label>
       <label className="terms-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} /><span>대국 전적과 ELO 산정을 위한 계정 정보 저장에 동의합니다.</span></label>
       {error && <p className="form-error">{error}</p>}

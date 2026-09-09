@@ -1,20 +1,25 @@
 import { authClient } from '@/app/auth';
+import { env } from 'cloudflare:workers';
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => null) as { email?: unknown; token?: unknown } | null;
-  if (typeof body?.email !== 'string' || body.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
-    return Response.json({ error: '올바른 이메일을 입력해 주세요.' }, { status: 400 });
+  try {
+    if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) throw new Error('Missing configuration');
+    const settingsResponse = await fetch(`${env.SUPABASE_URL}/auth/v1/settings`, {
+      headers: { apikey: env.SUPABASE_ANON_KEY }, signal: AbortSignal.timeout(5000),
+    });
+    if (!settingsResponse.ok) throw new Error('Auth settings unavailable');
+    const settings = await settingsResponse.json() as { external?: { kakao?: boolean } };
+    if (!settings.external?.kakao) return Response.json({ error: '카카오 로그인 연결을 준비 중입니다. 잠시 후 다시 이용해 주세요.' }, { status: 503 });
+    const client = await authClient();
+    const { data, error } = await client.auth.signInWithOAuth({
+      provider: 'kakao',
+      options: { redirectTo: new URL('/api/auth/callback', request.url).toString(), skipBrowserRedirect: true },
+    });
+    if (error || !data.url) throw new Error('OAuth initiation failed');
+    return Response.json({ url: data.url }, { headers: { 'Cache-Control': 'private, no-store' } });
+  } catch {
+    return Response.json({ error: '로그인 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.' }, { status: 503 });
   }
-  const client = await authClient();
-  if (body.token !== undefined) {
-    if (typeof body.token !== 'string' || !/^\d{6,10}$/.test(body.token)) return Response.json({ error: '인증번호를 확인해 주세요.' }, { status: 400 });
-    const { error } = await client.auth.verifyOtp({ email: body.email, token: body.token, type: 'email' });
-    if (error) return Response.json({ error: '인증번호가 만료되었거나 올바르지 않습니다.' }, { status: 400 });
-  } else {
-    const { error } = await client.auth.signInWithOtp({ email: body.email, options: { shouldCreateUser: true } });
-    if (error) return Response.json({ error: '인증 메일을 보내지 못했습니다. 잠시 후 다시 시도해 주세요.' }, { status: 429 });
-  }
-  return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
 export async function DELETE() {

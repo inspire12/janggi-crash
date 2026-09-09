@@ -23,8 +23,8 @@ export default async function JoinPage() {
           <JoinForm email={user.email} initialName={user.displayName} />
         ) : (
           <div className="join-auth">
-            <p>이메일 인증으로 간편하게 시작하세요. 별도 비밀번호는 저장하지 않습니다.</p>
-            <a className="match-button" href={signInPath('/join')}>이메일로 시작하기</a>
+            <p>카카오 로그인 후 게임 닉네임을 정하면 바로 시작할 수 있어요.</p>
+            <a className="match-button" href={signInPath('/join')}>카카오로 시작하기</a>
           </div>
         )}
       </section>

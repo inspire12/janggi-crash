@@ -22,9 +22,11 @@ export async function authClient() {
 export async function getAppUser(): Promise<AppUser | null> {
   const client = await authClient();
   const { data: { user }, error } = await client.auth.getUser();
-  if (error || !user?.email) return null;
-  const fullName = typeof user.user_metadata?.full_name === 'string' ? user.user_metadata.full_name : null;
-  return { userId: user.id, email: user.email, fullName, displayName: fullName ?? user.email.split('@')[0] };
+  if (error || !user || user.is_anonymous) return null;
+  const name = user.user_metadata?.full_name ?? user.user_metadata?.name ?? user.user_metadata?.preferred_username;
+  const fullName = typeof name === 'string' ? name : null;
+  // Identity is the verified Supabase UUID, never an email or nickname.
+  return { userId: user.id, email: user.email ?? '', fullName, displayName: fullName ?? '지휘관' };
 }
 
 export async function requireAppUser(returnTo: string) {

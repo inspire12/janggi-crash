@@ -27,12 +27,9 @@ write game state. Realtime remains a notification layer with polling fallback.
 
 ## Authentication
 
-Enable Supabase Email authentication. In the Magic Link email template include
-`{{ .Token }}` (the app accepts an emailed OTP, not a magic-link callback).
-Set the site URL to the deployed Worker URL.
-Supabase's default mail service is restricted; configure a verified SMTP provider
-before inviting arbitrary players. Never disable email verification to bypass it.
-Kakao login needs provider credentials and is not enabled by this migration.
+The app now uses Kakao OAuth, not email OTP. Follow `docs/kakao-login.md` to
+configure provider credentials and the two distinct callback URLs. SMTP is not
+required. Provider activation and a real Kakao login must be verified separately.
 
 ## Cloudflare Git build settings
 
@@ -49,7 +46,7 @@ and enables its workers.dev URL. Keep the Workers Free plan selected.
 
 ## Acceptance checks before calling the deployment playable
 
-1. Verify migrations, Worker secrets, email delivery and OTP login/logout.
+1. Verify migrations, Worker secrets and Kakao login/logout.
 2. Verify forged `oai-authenticated-*` headers do not authenticate anyone.
 3. Register two distinct accounts and match simultaneously: exactly one game.
 4. Choose both formations, exchange moves, approve/reject takeback, resign.
