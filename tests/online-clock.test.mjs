@@ -24,7 +24,7 @@ async function fixture(mode, elapsed) {
     '@/db': { getDatabase: () => db },
     '@/db/players': { getPlayer: async () => profile },
     '@/lib/janggi': { applyMove: () => [], isCheckmate: () => false, legalMoves: () => [] },
-    '@/lib/rating': { eloChange: () => 16, rankForElo: () => ({ name: '18급' }) },
+    '@/lib/rating': { eloChange: () => 16, rankForScore: () => ({ name: '18급' }) },
     '@/lib/supabase-events': { publishMatchEvent: async () => {} },
     '@/lib/game-clock': { readClock, timeControls },
   };
