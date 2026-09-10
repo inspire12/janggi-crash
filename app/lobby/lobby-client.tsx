@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
-import { Bell, Bot, ChevronRight, CircleUserRound, Clock3, Gift, History, LogOut, Menu, Radio, Settings, Shield, ShoppingBag, Swords, Trophy, UserRoundPlus, Users } from 'lucide-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Bell, Bot, ChevronRight, CircleUserRound, Clock3, Gift, History, LogOut, Menu, Settings, Shield, ShoppingBag, Swords, Trophy, UserRoundPlus, Users } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import FriendPanel from './friend-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -17,11 +17,12 @@ const tabItems = [
   { value: 'match', label: '대국', icon: Swords },
   { value: 'review', label: '복기', icon: History },
   { value: 'friends', label: '친구', icon: Users },
-  { value: 'ai', label: 'AI', icon: Bot },
+  { value: 'ai', label: '연습', icon: Bot },
   { value: 'shop', label: '상점', icon: ShoppingBag },
 ];
 
-export default function LobbyClient({ registered }: { registered: boolean }) {
+export default function LobbyClient({ authenticated, registered, initialTab = 'match', reviewContent }: { authenticated: boolean; registered: boolean; initialTab?: string; reviewContent?: ReactNode }) {
+  const accountPath = authenticated ? '/join' : '/login';
   const [profile, setProfile] = useState<Profile | null>(null);
   const [queued, setQueued] = useState(false);
   const [matchId, setMatchId] = useState<string | null>(null);
@@ -62,7 +63,7 @@ export default function LobbyClient({ registered }: { registered: boolean }) {
 
   async function changeQueue(action: 'join' | 'cancel') {
     if (!registered) {
-      window.location.assign('/join');
+      window.location.assign(accountPath);
       return;
     }
     setBusy(true);
@@ -84,18 +85,19 @@ export default function LobbyClient({ registered }: { registered: boolean }) {
   return (
     <main className="mobile-lobby-shell">
       <OnlineFormationDialog open={formationOpen} value={formation} onOpenChange={setFormationOpen} onChange={setFormation} onConfirm={() => void changeQueue('join')} busy={busy} />
-      <Tabs defaultValue="match" className="lobby-tabs">
+      <Tabs defaultValue={initialTab} className="lobby-tabs" onValueChange={(value) => { if (value === 'review' && !reviewContent) window.location.assign('/review'); }}>
         <LobbyHeader profile={profile} onProfileChange={setProfile} />
         <div className="lobby-main">
-          {!registered && <p>로비에 오신 것을 환영해요. 대국 전에 <Link href="/join">닉네임 설정과 이용 동의</Link>를 완료해 주세요.</p>}
+          {!registered && <p>{authenticated ? <>대국 전에 <Link href="/join">닉네임 설정과 이용 동의</Link>를 완료해 주세요.</> : <>온라인 대국을 시작하려면 <Link href="/login">로그인</Link>해 주세요.</>}</p>}
           <TabsContent value="match">
+            <div className="lobby-greeting lobby-match-heading"><h1>대국실</h1></div>
             <fieldset className="formation-side" disabled={queued || busy || Boolean(matchId)}><legend>대국 시간</legend><div className="formation-options">{(Object.keys(timeControls) as TimeControl[]).map((value) => <button type="button" key={value} aria-pressed={timeControl === value} className={timeControl === value ? 'selected' : ''} onClick={() => setTimeControl(value)}>{timeControls[value].label}</button>)}</div></fieldset>
-            <MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} formation={formation} onQueue={changeQueue} onChooseFormation={() => registered ? setFormationOpen(true) : window.location.assign('/join')} />
+            <MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} formation={formation} onQueue={changeQueue} onChooseFormation={() => registered ? setFormationOpen(true) : window.location.assign(accountPath)} />
           </TabsContent>
-          <TabsContent value="review"><EmptyTab icon={History} eyebrow="GAME RECORDS" title="기보와 복기" text="완료한 대국의 수순을 다시 보고, 중요한 장면을 저장해 분석합니다." action="내 기보 보기" /></TabsContent>
-          <TabsContent value="friends">{registered ? <CommunityTab /> : <EmptyTab icon={Users} eyebrow="FRIENDS" title="친구와 대국하기" text="닉네임 설정과 이용 동의를 완료하면 친구 기능을 사용할 수 있어요." action="계정 설정 완료하기" href="/join" />}</TabsContent>
-          <TabsContent value="ai"><EmptyTab icon={Bot} eyebrow="TRAINING" title="컴퓨터와 두기" text="난이도와 진영을 선택하고 시간 제한 없이 새로운 수를 연습합니다." action="연습 대국 시작" href="/" /></TabsContent>
-          <TabsContent value="shop"><EmptyTab icon={Gift} eyebrow="COLLECTION" title="상점과 이벤트" text="기물, 장기판, 포획 효과를 둘러보고 보유한 테마를 장착합니다." action="테마 둘러보기" /></TabsContent>
+          <TabsContent value="review">{reviewContent ?? <p>내 기보를 불러오는 중…</p>}</TabsContent>
+          <TabsContent value="friends">{registered ? <CommunityTab /> : <EmptyTab icon={Users} eyebrow="FRIENDS" title="친구와 대국하기" text="로그인 후 계정 설정을 완료하면 친구 기능을 사용할 수 있어요." action={authenticated ? '계정 설정 완료하기' : '로그인'} href={accountPath} />}</TabsContent>
+          <TabsContent value="ai"><EmptyTab icon={Bot} eyebrow="TRAINING" title="연습 대국" text="혼자 양쪽 기물을 움직이며 수를 연습합니다. 컴퓨터 대국은 준비 중입니다." action="연습 대국 시작" href="/practice" /></TabsContent>
+          <TabsContent value="shop"><EmptyTab icon={Gift} eyebrow="준비 중" title="상점과 이벤트" text="기물, 장기판, 포획 효과를 고르는 상점을 준비하고 있어요. 출석 보상은 내 계정에서 받을 수 있습니다." action="테마 둘러보기" /></TabsContent>
         </div>
         <TabsList className="lobby-bottom-nav" aria-label="로비 메뉴">
           {tabItems.map(({ value, label, icon: Icon }) => <TabsTrigger value={value} key={value}><Icon /><span>{label}</span></TabsTrigger>)}
@@ -107,9 +109,12 @@ export default function LobbyClient({ registered }: { registered: boolean }) {
 
 function LobbyHeader({ profile, onProfileChange }: { profile: Profile | null; onProfileChange: (profile: Profile) => void }) {
   return <header className="mobile-lobby-header">
-    <Sheet><SheetTrigger className="profile-trigger" aria-label="내 정보 열기"><Menu size={20} /><span className="mini-avatar">將</span></SheetTrigger><ProfileSheet profile={profile} onProfileChange={onProfileChange} /></Sheet>
+    <div aria-hidden="true" />
     <Link className="lobby-wordmark" href="/"><i>將</i><span>장기: 격돌</span></Link>
-    <button className="notification-button" aria-label="알림"><Bell size={20} /><i /></button>
+    <div className="lobby-account-actions">
+      <button className="notification-button" aria-label="알림"><Bell size={20} /></button>
+      <Sheet><SheetTrigger className="profile-trigger" aria-label="내 정보 열기"><span className="mini-avatar">將</span><Menu size={20} /></SheetTrigger><ProfileSheet profile={profile} onProfileChange={onProfileChange} /></Sheet>
+    </div>
   </header>;
 }
 
@@ -136,24 +141,23 @@ function ProfileSheet({ profile, onProfileChange }: { profile: Profile | null; o
       setSavingTakeback(false);
     }
   }
-  return <SheetContent side="left" className="profile-sheet">
+  return <SheetContent side="right" className="profile-sheet">
     <SheetHeader className="profile-sheet-head"><div className={`sheet-emblem ${profile?.rank.key ?? ''}`}><Shield size={26} /></div><SheetTitle>{profile?.displayName ?? '지휘관'}</SheetTitle><SheetDescription>{maskedEmail}</SheetDescription></SheetHeader>
     {profile && <><section className="sheet-rating"><span>{profile.rank.name}</span><strong>{profile.elo}</strong><small>ELO</small></section><section className="sheet-record"><div><strong>{profile.games}</strong><span>대국</span></div><div><strong>{profile.wins}</strong><span>승</span></div><div><strong>{profile.losses}</strong><span>패</span></div><div><strong>{profile.winRate}%</strong><span>승률</span></div></section></>}
     {profile && <section className="sheet-preferences"><div><Settings /><span><strong>무르기 요청 받기</strong><small>끄면 상대가 무르기를 요청할 수 없습니다.</small></span><Switch aria-label="무르기 요청 받기" checked={profile.allowTakebackRequests} disabled={savingTakeback} onCheckedChange={(checked) => void changeTakebackPreference(checked)} /></div>{settingError && <p>{settingError}</p>}</section>}
-    <nav className="sheet-menu"><button><CircleUserRound /><span>프로필 및 개인정보</span><ChevronRight /></button><button><Trophy /><span>전적과 계급</span><ChevronRight /></button><button><Settings /><span>환경설정</span><ChevronRight /></button></nav>
+    <nav className="sheet-menu"><Link href="/account"><CircleUserRound /><span>프로필 및 개인정보</span><ChevronRight /></Link><Link href="/account#record"><Trophy /><span>전적과 계급</span><ChevronRight /></Link><Link href="/settings"><Settings /><span>설정</span><ChevronRight /></Link></nav>
     {/* Dispatch-owned authentication requires a top-level anchor navigation. */}
     {/* oxlint-disable-next-line next/no-html-link-for-pages */}
-    <button className="sheet-signout" onClick={async () => { const response = await fetch('/api/auth', { method: 'DELETE' }); if (response.ok) window.location.assign('/'); }}><LogOut /> 로그아웃</button>
+    {profile ? <button className="sheet-signout" onClick={async () => { const response = await fetch('/api/auth', { method: 'DELETE' }); if (response.ok) window.location.assign('/'); }}><LogOut /> 로그아웃</button> : <Link className="sheet-signout" href="/login">로그인 / 계정 설정</Link>}
   </SheetContent>;
 }
 
 function MatchTab({ profile, matchId, queued, busy, error, formation, onQueue, onChooseFormation }: { profile: Profile | null; matchId: string | null; queued: boolean; busy: boolean; error: string; formation: Formation; onQueue: (action: 'join' | 'cancel') => Promise<void>; onChooseFormation: () => void }) {
   const formationLabel = formations.find((item) => item.value === formation)?.label;
   return <div className="match-tab-content">
-    <div className="lobby-greeting"><span><Radio size={13} /> 오늘도 한판!</span><h1>대국하기</h1><p>실력이 비슷한 상대와 가볍게 한판 시작해요.</p></div>
     {matchId && <section className="resume-match-card"><div><span>두던 대국이 있어요</span><strong>이어서 둘까요?</strong><small><Clock3 size={13} /> 마지막 상태 그대로 보관되어 있어요.</small></div><Link href={`/battle/${matchId}`}>이어서 두기 <ChevronRight /></Link></section>}
     <section className="quick-match-card"><div className="quick-rank"><div className={`rank-emblem ${profile?.rank.key ?? ''}`}><Shield size={27} /></div><div><span>나의 기력</span><strong>{profile?.elo ?? '—'} <small>ELO</small></strong><em>{profile?.rank.name ?? '불러오는 중'}</em></div></div>{queued && <div className="queued-formation"><span>선택 포진</span><strong>{formationLabel}</strong></div>}<button className={`match-button ${queued ? 'searching' : ''}`} disabled={busy || Boolean(matchId)} onClick={() => queued ? void onQueue('cancel') : onChooseFormation()}><Swords size={21} />{busy ? '연결 중…' : queued ? '상대 찾는 중 · 취소' : matchId ? '진행 중인 대국이 있어요' : '바로 대국하기'}</button>{queued && <p className="queue-message"><i /> 포진을 잠그고 비슷한 실력의 상대를 찾고 있어요.</p>}{error && <p className="form-error">{error}</p>}</section>
-    <section className="live-rooms-section"><div className="section-heading"><div><span>구경하기</span><h2>지금 두는 대국</h2></div><button>전체 보기 <ChevronRight /></button></div><div className="empty-room"><Radio /><strong>아직 관전할 대국이 없어요</strong><span>새 대국이 시작되면 바로 알려드릴게요.</span></div></section>
+    <section className="live-rooms-section"><div className="section-heading"><h2>관전</h2><span>준비 중</span></div></section>
   </div>;
 }
 

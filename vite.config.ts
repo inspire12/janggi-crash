@@ -24,9 +24,11 @@ export default defineConfig(async () => {
 
   return {
     css: { postcss: { plugins: [tailwindcss()] } },
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      ...(isCodexSeatbeltSandbox ? { watch: { useFsEvents: false, usePolling: true } } : {}),
+      allowedHosts: process.env.LOCAL_TEST_HOST ? [process.env.LOCAL_TEST_HOST] : [],
+      fs: { deny: ['.env', '.env.*', '.dev.vars', '.local-testing.json', '*.{crt,pem}', '**/.git/**'] },
+    },
     plugins: [
       vinext(),
       cloudflare({

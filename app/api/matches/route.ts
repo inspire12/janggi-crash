@@ -2,12 +2,13 @@ import { getAppUser } from '@/app/auth';
 import { getDatabase } from '@/db';
 import { getPlayer, type PlayerProfile } from '@/db/players';
 import { applyMove, isCheckmate, legalMoves, type Piece, type Side } from '@/lib/janggi';
-import { eloChange, rankForElo } from '@/lib/rating';
+import { eloChange, rankForScore } from '@/lib/rating';
 import { publishMatchEvent } from '@/lib/supabase-events';
 import { readClock, timeControls } from '@/lib/game-clock';
 
 type MatchRow = {
   id: string;
+  rated: boolean;
   cho_user_id: string;
   han_user_id: string;
   status: 'active' | 'finished';
@@ -36,7 +37,7 @@ async function ownedMatch(matchId: string, userId: string) {
               previous_board_json, previous_turn, previous_cho_time_ms,
               previous_han_time_ms, takeback_requested_by, version,
               winner_user_id, result_reason, cho_time_ms, han_time_ms,
-              turn_started_at, created_at, updated_at, time_control
+              turn_started_at, created_at, updated_at, time_control, rated
        FROM matches
        WHERE id = ? AND (cho_user_id = ? OR han_user_id = ?)`,
     )
@@ -47,7 +48,7 @@ async function ownedMatch(matchId: string, userId: string) {
 async function player(id: string) {
   return getDatabase()
     .prepare(
-      `SELECT id, email, display_name, elo, wins, losses, draws, streak,
+      `SELECT id, email, display_name, elo, rank_score, wins, losses, draws, streak,
               allow_takeback_requests, terms_accepted_at
        FROM players WHERE id = ?`,
     )
@@ -64,6 +65,10 @@ export async function GET(request: Request) {
   if (!matchId) return Response.json({ error: '대국 ID가 필요합니다.' }, { status: 400 });
   const match = await ownedMatch(matchId, user.userId);
   if (!match) return Response.json({ error: '대국을 찾을 수 없습니다.' }, { status: 404 });
+  const moveInfo = await getDatabase().prepare(`SELECT
+    COALESCE(SUM(CASE WHEN kind='move' THEN 1 WHEN kind='takeback' THEN -1 ELSE 0 END),0)::integer AS count,
+    BOOL_OR(kind='checkpoint') AS incomplete FROM game_record_events WHERE match_id=? AND seq <=
+    (SELECT record_seq FROM matches WHERE id=? AND version=?)`).bind(match.id,match.id,match.version).first<{count:number;incomplete:boolean|null}>();
   const [cho, han] = await Promise.all([player(match.cho_user_id), player(match.han_user_id)]);
   const side: Side = match.cho_user_id === user.userId ? 'cho' : 'han';
   const now = Date.now();
@@ -78,15 +83,19 @@ export async function GET(request: Request) {
     id: profile?.id,
     displayName: profile?.display_name ?? '지휘관',
     elo: profile?.elo ?? 1200,
-    rank: rankForElo(profile?.elo ?? 1200),
+    rank: rankForScore(profile?.rank_score ?? 0),
   });
+  const rankResult = match.status === 'finished' ? await getDatabase().prepare('SELECT before_score, after_score FROM rank_results WHERE match_id=? AND player_id=?').bind(match.id,user.userId).first<{before_score:number;after_score:number}>() : null;
   return Response.json({
+    rankResult,
     match: {
       id: match.id,
+      rated: match.rated,
       status: match.status,
       turn: match.turn,
       board: JSON.parse(match.board_json) as Piece[],
       version: match.version,
+      moveCount: moveInfo && moveInfo.incomplete === false ? Math.max(0,moveInfo.count) : null,
       winnerSide:
         match.winner_user_id === match.cho_user_id
           ? 'cho'
@@ -183,7 +192,7 @@ export async function POST(request: Request) {
        previous_board_json = NULL, previous_turn = NULL,
        previous_cho_time_ms = NULL, previous_han_time_ms = NULL,
        takeback_requested_by = NULL, version = version + 1,
-       turn_started_at = ?, updated_at = ?, record_context = ?::jsonb
+       turn_started_at = ?, updated_at = ?, record_context = CAST(? AS text)::jsonb
        WHERE id = ? AND version = ? AND status = 'active' AND takeback_requested_by = ?`,
     ).bind(now, now, JSON.stringify({ kind: 'takeback', actorUserId: user.userId, requestedBy: match.takeback_requested_by }), match.id, match.version, match.takeback_requested_by).run();
     if (result.meta.changes !== 1) return Response.json({ error: '대국 상태가 변경되었습니다.' }, { status: 409 });
@@ -227,7 +236,7 @@ export async function POST(request: Request) {
            cho_time_ms = ?, han_time_ms = ?, turn_started_at = ?,
            previous_board_json = ?, previous_turn = ?,
            previous_cho_time_ms = ?, previous_han_time_ms = ?,
-           takeback_requested_by = NULL, record_context = ?::jsonb
+           takeback_requested_by = NULL, record_context = CAST(? AS text)::jsonb
        WHERE id = ? AND version = ? AND status = 'active'`,
     )
     .bind(
@@ -258,7 +267,7 @@ export async function POST(request: Request) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(match.id, match.version + 1, user.userId, piece.id, piece.x, piece.y, to.x, to.y, now);
-  const ratings = checkmate ? await ratingStatements(user.userId, opponentId) : [];
+  const ratings = checkmate && match.rated ? await ratingStatements(user.userId, opponentId) : [];
   const results = await db.batch([update, move, ...ratings], true);
   if (!results[0].success || results[0].meta.changes !== 1) {
     return Response.json({ error: '상대 수가 먼저 반영되었습니다. 새로고침합니다.' }, { status: 409 });
@@ -277,12 +286,12 @@ async function finishMatch(match: MatchRow, winnerId: string, loserId: string, r
       .prepare(
         `UPDATE matches SET status = 'finished', winner_user_id = ?,
          result_reason = ?, version = version + 1, updated_at = ?,
-         cho_time_ms = ?, han_time_ms = ?, record_context = ?::jsonb
+         cho_time_ms = ?, han_time_ms = ?, record_context = CAST(? AS text)::jsonb
          WHERE id = ? AND status = 'active' AND version = ?`,
       )
       .bind(winnerId, reason, now, choTimeMs, hanTimeMs,
         JSON.stringify({ kind: reason, actorUserId: loserId }), match.id, match.version);
-  const [result] = await db.batch([update, ...await ratingStatements(winnerId, loserId)], true);
+  const [result] = await db.batch([update, ...(match.rated ? await ratingStatements(winnerId, loserId) : [])], true);
   return result.meta.changes === 1;
 }
 

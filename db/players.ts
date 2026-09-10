@@ -6,6 +6,7 @@ export type PlayerProfile = {
   email: string;
   display_name: string;
   elo: number;
+  rank_score: number;
   wins: number;
   losses: number;
   draws: number;
@@ -17,7 +18,7 @@ export type PlayerProfile = {
 export async function getPlayer(userId: string) {
   return getDatabase()
     .prepare(
-      `SELECT id, email, display_name, elo, wins, losses, draws, streak,
+      `SELECT id, email, display_name, elo, rank_score, wins, losses, draws, streak,
               allow_takeback_requests, terms_accepted_at
        FROM players WHERE id = ?`,
     )

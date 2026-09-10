@@ -25,4 +25,4 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
-export const config = { matcher: ['/api/:path*', '/lobby/:path*', '/battle/:path*', '/join', '/login'] };
+export const config = { matcher: ['/api/:path*', '/lobby/:path*', '/account/:path*', '/settings/:path*', '/review/:path*', '/battle/:path*', '/join', '/login'] };

@@ -45,21 +45,29 @@ export async function GET(request: Request) {
 
   const rows = await db.prepare(
     `SELECT f.pair_key, f.requester_user_id, f.addressee_user_id, f.status,
-      p.id, p.display_name, p.elo
+      p.id, p.display_name, p.elo, COALESCE(fp.favorite,false) AS favorite,
+      COALESCE(fp.group_name,'') AS group_name, p.last_seen_at,
+      EXISTS(SELECT 1 FROM matches m WHERE m.status='active' AND (m.cho_user_id=p.id OR m.han_user_id=p.id)) AS playing
      FROM friendships f
      JOIN players p ON p.id = CASE WHEN f.requester_user_id = ? THEN f.addressee_user_id ELSE f.requester_user_id END
-     WHERE f.requester_user_id = ? OR f.addressee_user_id = ?
+     LEFT JOIN friend_preferences fp ON fp.owner_id=? AND fp.friend_id=p.id
+     WHERE (f.requester_user_id = ? OR f.addressee_user_id = ?)
+       AND NOT EXISTS (SELECT 1 FROM blocked_players b
+         WHERE (b.blocker_user_id=? AND b.blocked_user_id=p.id)
+            OR (b.blocker_user_id=p.id AND b.blocked_user_id=?))
      ORDER BY f.updated_at DESC`,
-  ).bind(current.user.userId, current.user.userId, current.user.userId).all<{
+  ).bind(current.user.userId, current.user.userId, current.user.userId, current.user.userId, current.user.userId, current.user.userId).all<{
     pair_key: string; requester_user_id: string; addressee_user_id: string;
     status: string; id: string; display_name: string; elo: number;
+    favorite:boolean;group_name:string;last_seen_at:number|null;playing:boolean;
   }>();
 
   const friends = [];
   const incoming = [];
   const outgoing = [];
   for (const row of rows.results) {
-    const player = { id: row.id, displayName: row.display_name, elo: row.elo };
+    const online=Number(row.last_seen_at)>Date.now()-90000;
+    const player = { id: row.id, displayName: row.display_name, elo: row.elo, favorite:row.favorite, groupName:row.group_name, presence:row.status==='accepted' ? online ? row.playing?'대국 중':'접속 중':'오프라인' : '비공개' };
     if (row.status === 'accepted') friends.push(player);
     else if (row.addressee_user_id === current.user.userId) incoming.push(player);
     else outgoing.push(player);
@@ -70,28 +78,41 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const current = await currentAccount();
   if (!current) return Response.json({ error: '로그인이 필요합니다.' }, { status: 401 });
-  const body = (await request.json().catch(() => ({}))) as { action?: string; userId?: string };
-  if (!body.userId || body.userId === current.user.userId) {
+  const body = (await request.json().catch(() => ({}))) as { action?: string; userId?: string;favorite?:unknown;groupName?:unknown };
+  if (!body || typeof body.userId !== 'string' || !body.userId || body.userId === current.user.userId) {
     return Response.json({ error: '올바른 사용자를 선택하세요.' }, { status: 400 });
   }
   const db = getDatabase();
-  const key = pairKey(current.user.userId, body.userId);
+  const targetId = body.userId;
+  return db.transaction(async db => {
+  const key = pairKey(current.user.userId, targetId);
+  if (['request','accept','organize'].includes(body.action ?? '')) {
+    const blocked=await db.prepare('SELECT 1 FROM blocked_players WHERE (blocker_user_id=? AND blocked_user_id=?) OR (blocker_user_id=? AND blocked_user_id=?)').bind(current.user.userId,body.userId!,body.userId!,current.user.userId).first();
+    if(blocked)return Response.json({error:'차단 관계에서는 친구 요청을 처리할 수 없습니다.'},{status:403});
+  }
+  if(body.action==='organize') {
+    if(typeof body.favorite!=='boolean'||typeof body.groupName!=='string'||body.groupName.trim().length>20)return Response.json({error:'그룹은 20자 이내로 입력하세요.'},{status:400});
+    const friend=await db.prepare("SELECT 1 FROM friendships WHERE pair_key=? AND status='accepted'").bind(key).first();
+    if(!friend)return Response.json({error:'친구만 정리할 수 있습니다.'},{status:403});
+    await db.prepare(`INSERT INTO friend_preferences(owner_id,friend_id,favorite,group_name) VALUES(?,?,?,?) ON CONFLICT(owner_id,friend_id) DO UPDATE SET favorite=excluded.favorite,group_name=excluded.group_name`).bind(current.user.userId,targetId,body.favorite,body.groupName.trim()).run();
+    return Response.json({ok:true});
+  }
 
   if (body.action === 'request') {
-    const target = await db.prepare('SELECT id FROM players WHERE id = ?').bind(body.userId).first();
+    const target = await db.prepare('SELECT id FROM players WHERE id = ?').bind(targetId).first();
     if (!target) return Response.json({ error: '사용자를 찾을 수 없습니다.' }, { status: 404 });
     const blocked = await db.prepare(
       `SELECT 1 FROM blocked_players WHERE
        (blocker_user_id = ? AND blocked_user_id = ?) OR
        (blocker_user_id = ? AND blocked_user_id = ?) LIMIT 1`,
-    ).bind(current.user.userId, body.userId, body.userId, current.user.userId).first();
+    ).bind(current.user.userId, targetId, targetId, current.user.userId).first();
     if (blocked) return Response.json({ error: '차단 관계에서는 친구 요청을 보낼 수 없습니다.' }, { status: 403 });
     try {
       const now = Date.now();
       await db.prepare(
         `INSERT INTO friendships (pair_key, requester_user_id, addressee_user_id, status, created_at, updated_at)
          VALUES (?, ?, ?, 'pending', ?, ?)`,
-      ).bind(key, current.user.userId, body.userId, now, now).run();
+      ).bind(key, current.user.userId, targetId, now, now).run();
       return Response.json({ ok: true });
     } catch {
       return Response.json({ error: '이미 친구이거나 요청을 보낸 사용자입니다.' }, { status: 409 });
@@ -119,4 +140,5 @@ export async function POST(request: Request) {
   }
 
   return Response.json({ error: '지원하지 않는 요청입니다.' }, { status: 400 });
+  },736421);
 }

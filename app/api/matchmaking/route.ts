@@ -22,8 +22,8 @@ export async function GET() {
     .bind(user.userId, user.userId)
     .first<ActiveMatch>();
   const queued = await db
-    .prepare('SELECT user_id, time_control FROM matchmaking_queue WHERE user_id = ?')
-    .bind(user.userId)
+    .prepare('SELECT user_id, time_control FROM matchmaking_queue WHERE user_id = ? AND expires_at > ?')
+    .bind(user.userId, Date.now())
     .first<{ user_id: string; time_control: TimeControl }>();
   return Response.json({ matchId: active?.id ?? null, queued: Boolean(queued), timeControl: queued?.time_control ?? null });
 }
@@ -37,6 +37,7 @@ export async function POST(request: Request) {
   const db = getDatabase();
 
   return db.transaction(async db => {
+  await db.prepare('DELETE FROM matchmaking_queue WHERE expires_at <= ?').bind(Date.now()).run();
   if (body.action === 'cancel') {
     await db.prepare('DELETE FROM matchmaking_queue WHERE user_id = ?').bind(user.userId).run();
     return Response.json({ queued: false, matchId: null });
@@ -65,20 +66,22 @@ export async function POST(request: Request) {
   const opponent = await db
     .prepare(
       `SELECT user_id, elo, formation FROM matchmaking_queue
-       WHERE user_id != ? AND time_control = ?
+       WHERE user_id != ? AND time_control = ? AND expires_at > ?
+         AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.status='active'
+           AND (m.cho_user_id=matchmaking_queue.user_id OR m.han_user_id=matchmaking_queue.user_id))
        ORDER BY ABS(elo - ?), joined_at
        LIMIT 1`,
     )
-    .bind(user.userId, timeControl, profile.elo)
+    .bind(user.userId, timeControl, Date.now(), profile.elo)
     .first<QueueOpponent>();
   if (!opponent) {
     await db
       .prepare(
-        `INSERT INTO matchmaking_queue (user_id, elo, formation, joined_at, time_control)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(user_id) DO UPDATE SET elo = excluded.elo, formation = excluded.formation, joined_at = excluded.joined_at, time_control = excluded.time_control`,
+        `INSERT INTO matchmaking_queue (user_id, elo, formation, joined_at, time_control, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET elo = excluded.elo, formation = excluded.formation, joined_at = excluded.joined_at, time_control = excluded.time_control, expires_at=excluded.expires_at`,
       )
-      .bind(user.userId, profile.elo, formation, Date.now(), timeControl)
+      .bind(user.userId, profile.elo, formation, Date.now(), timeControl, Date.now()+90000)
       .run();
     return Response.json({ queued: true, matchId: null });
   }

@@ -1,7 +1,7 @@
 import { getAppUser } from '@/app/auth';
 import { getPlayer } from '@/db/players';
 import { getDatabase } from '@/db';
-import { rankForElo } from '@/lib/rating';
+import { rankForScore } from '@/lib/rating';
 
 export async function GET() {
   const user = await getAppUser();
@@ -22,7 +22,7 @@ export async function GET() {
     allowTakebackRequests: profile.allow_takeback_requests === 1,
     games,
     winRate: games ? Math.round((profile.wins / games) * 100) : 0,
-    rank: rankForElo(profile.elo),
+    rank: rankForScore(profile.rank_score),
   });
 }
 
@@ -33,7 +33,23 @@ export async function PATCH(request: Request) {
   if (!profile || profile.terms_accepted_at === 0) {
     return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   }
-  const body = (await request.json().catch(() => ({}))) as { allowTakebackRequests?: boolean };
+  const body = (await request.json().catch(() => ({}))) as { allowTakebackRequests?: boolean; displayName?: unknown } | null;
+  if (!body || typeof body !== 'object') return Response.json({ error: '올바른 설정값이 필요합니다.' }, { status: 400 });
+  if ('displayName' in body) {
+    const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
+    if (!/^[가-힣a-zA-Z0-9_ ]{2,16}$/.test(displayName)) {
+      return Response.json({ error: '닉네임은 한글, 영문, 숫자, 밑줄, 공백으로 2~16자까지 입력하세요.' }, { status: 400 });
+    }
+    let result;
+    try {
+      result = await getDatabase().prepare('UPDATE players SET display_name = ?, updated_at = ? WHERE id = ?').bind(displayName, Date.now(), user.userId).run();
+    } catch (cause) {
+      if (cause && typeof cause === 'object' && 'code' in cause && cause.code === '23505') return Response.json({ error: '이미 사용 중인 닉네임입니다.' }, { status: 409 });
+      return Response.json({ error: '닉네임을 저장하지 못했습니다.' }, { status: 500 });
+    }
+    if (!result.success || result.meta.changes !== 1) return Response.json({ error: '닉네임을 저장하지 못했습니다.' }, { status: 500 });
+    return Response.json({ displayName });
+  }
   if (typeof body.allowTakebackRequests !== 'boolean') {
     return Response.json({ error: '올바른 설정값이 필요합니다.' }, { status: 400 });
   }

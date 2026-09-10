@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import postgres from 'postgres';
+import { localTestingEnabled } from '@/lib/local-testing';
 
 type Value = string | number | boolean | null;
 type Result<T = Record<string, unknown>> = { success: boolean; results: T[]; meta: { changes: number } };
@@ -29,7 +30,7 @@ class Database {
     if (this.execute) return work(this);
     if (!env.DATABASE_URL) throw new Error('Supabase DATABASE_URL is not configured.');
     // A Worker request must not reuse another request's TCP socket.
-    const sql = postgres(env.DATABASE_URL, { prepare: false, max: 1, connect_timeout: 10, idle_timeout: 1, ssl: 'require' });
+    const sql = postgres(env.DATABASE_URL, { prepare: false, max: 1, connect_timeout: 10, idle_timeout: 1, ssl: localTestingEnabled() ? false : 'require' });
     try {
       return await sql.begin(async tx => {
         if (lock !== undefined) await tx`SELECT pg_advisory_xact_lock(${lock})`;

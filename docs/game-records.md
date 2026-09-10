@@ -31,5 +31,14 @@ the table directly, and other players cannot retrieve the record through the API
 actual timeline (including undone moves) and the surviving final move sequence.
 Snapshots are stored at action time, not continuously ticking clock values.
 The format is app-specific JSON, not a claim of compatibility with an external
-janggi file standard. A graphical replay screen and download UI are not added
-by this storage/API change.
+janggi file standard.
+
+## Local replay UI — 2026-09-10
+
+`/review` lists the participant's latest 100 finished games. `/review/[id]`
+loads every event page, validates continuity with `replayRecord`, and displays
+snapshots with first/previous/next/last controls and a position slider. The
+position counts events, including takebacks, not only surviving moves.
+Checkpoint-only games are explicitly labelled. Download/import, annotations,
+autoplay and branch analysis are still pending. These local additions do not
+establish production deployment or browser interaction test completion.

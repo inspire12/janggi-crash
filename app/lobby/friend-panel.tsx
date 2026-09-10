@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Search, UserPlus, Users, X } from 'lucide-react';
+import ChallengePanel from './challenge-panel';
+import FriendGroups, {type GroupFriend} from './friend-groups';
 
-type Friend = { id: string; displayName: string; elo: number };
+type Friend = GroupFriend;
 type SearchResult = { id: string; display_name: string; elo: number; relationship: 'friend' | 'sent' | 'received' | null };
 type FriendData = { friends: Friend[]; incoming: Friend[]; outgoing: Friend[] };
 
@@ -21,7 +23,8 @@ export default function FriendPanel() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    const poll = window.setInterval(() => void load().catch(() => {}), 15000);
+    return () => {window.clearTimeout(timer);window.clearInterval(poll);};
   }, [load]);
 
   async function search(event: React.SyntheticEvent<HTMLFormElement>) {
@@ -77,6 +80,7 @@ export default function FriendPanel() {
 
     {data.incoming.length > 0 && <div className="friend-group"><h3>받은 요청 <b>{data.incoming.length}</b></h3><ul>{data.incoming.map((player) => <li key={player.id}><div><strong>{player.displayName}</strong><span>{player.elo} ELO</span></div><div className="friend-actions"><button aria-label={`${player.displayName} 친구 요청 수락`} disabled={busy} onClick={() => void act('accept', player.id)}><Check /></button><button aria-label={`${player.displayName} 친구 요청 거절`} disabled={busy} onClick={() => void act('reject', player.id)}><X /></button></div></li>)}</ul></div>}
 
-    <div className="friend-group"><h3>내 친구 <b>{data.friends.length}</b></h3>{data.friends.length ? <ul>{data.friends.map((player) => <li key={player.id}><div><strong>{player.displayName}</strong><span>{player.elo} ELO</span></div><div className="friend-actions"><button disabled title="친선 대국은 다음 단계에서 연결됩니다.">대국 신청</button><button className="friend-remove" disabled={busy} onClick={() => void act('remove', player.id)}>삭제</button></div></li>)}</ul> : <div className="friend-empty"><UserPlus /><span>아직 친구가 없어요</span><small>닉네임으로 첫 친구를 찾아보세요.</small></div>}</div>
+    <FriendGroups friends={data.friends} onChange={load} onRemove={id=>void act('remove',id)} />
+    <ChallengePanel friends={data.friends} />
   </section>;
 }

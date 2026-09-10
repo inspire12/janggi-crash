@@ -1,3 +1,10 @@
+export function rankForScore(score: number) {
+  const level = Math.min(26, Math.floor(Math.max(0, score) / 100));
+  const name = level < 18 ? `${18-level}급` : `${level-17}단`;
+  const key = level < 18 ? `geup-${18-level}` : `dan-${level-17}`;
+  return {name,key,code:key,points:score % 100,next:level===26?null:100-score%100};
+}
+
 export function rankForElo(elo: number) {
   if (elo >= 2100) {
     const dan = Math.min(9, Math.floor((elo - 2100) / 100) + 1);

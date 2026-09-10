@@ -36,6 +36,9 @@ yarn-error.log*
 next-env.d.ts
 /dist/
 /.wrangler/
+/.dev.vars
+/.local-testing.json
 /outputs/
 /work/
 /supabase/.temp/
+/supabase/.branches/

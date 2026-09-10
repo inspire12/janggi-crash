@@ -49,11 +49,14 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, guildId: id });
   }
   if ((body.action === 'block' || body.action === 'unblock') && body.userId && body.userId !== current.user.userId) {
+    const targetId=body.userId;
+    return db.transaction(async db => {
     if (body.action === 'block') await db.prepare(
       'INSERT INTO blocked_players (blocker_user_id, blocked_user_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
-    ).bind(current.user.userId, body.userId, Date.now()).run();
-    else await db.prepare('DELETE FROM blocked_players WHERE blocker_user_id = ? AND blocked_user_id = ?').bind(current.user.userId, body.userId).run();
+    ).bind(current.user.userId, targetId, Date.now()).run();
+    else await db.prepare('DELETE FROM blocked_players WHERE blocker_user_id = ? AND blocked_user_id = ?').bind(current.user.userId, targetId).run();
     return Response.json({ ok: true });
+    },736421);
   }
   return Response.json({ error: '지원하지 않는 요청입니다.' }, { status: 400 });
 }

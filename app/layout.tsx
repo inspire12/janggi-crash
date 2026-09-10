@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Geist_Mono, Noto_Sans_KR, Noto_Serif_KR } from 'next/font/google';
 import './globals.css';
+import Presence from '@/components/presence';
 
 const notoSansKr = Noto_Sans_KR({
   variable: '--font-noto-sans-kr',
@@ -34,6 +35,7 @@ export default function RootLayout({
       <body
         className={`${notoSansKr.variable} ${notoSerifKr.variable} ${geistMono.variable} antialiased`}
       >
+        <Presence />
         {children}
       </body>
     </html>
