@@ -35,6 +35,11 @@ class Database {
     sql.on('error', () => { /* query/connect promises report sanitized errors below */ });
     const started = Date.now();
     let stage = 'connect';
+    let handshake = 'socket';
+    const connection = (sql as unknown as { connection: { on: (event: string, listener: () => void) => void } }).connection;
+    for (const event of ['connect', 'sslconnect', 'authenticationSASL', 'authenticationSASLContinue', 'authenticationSASLFinal', 'readyForQuery']) {
+      connection.on(event, () => { handshake = event; });
+    }
     try {
       await sql.connect();
       await sql.query('BEGIN');
@@ -53,15 +58,20 @@ class Database {
     } catch (error) {
       if (stage === 'transaction') await sql.query('ROLLBACK').catch(() => {});
       const code = (error as { code?: unknown } | null)?.code;
-      const message = error instanceof Error ? error.message : '';
+      const rawMessage = (error as { message?: unknown } | null)?.message;
+      const message = typeof rawMessage === 'string' ? rawMessage : typeof error === 'string' ? error : '';
       const category = /subrequests/i.test(message) ? 'WORKER_SUBREQUEST_LIMIT'
         : /password authentication|SASL/i.test(message) ? 'DB_AUTH_FAILED'
         : /timeout|timed out/i.test(message) ? 'DB_TIMEOUT'
         : /certificate|TLS|SSL/i.test(message) ? 'DB_TLS_FAILED'
         : /Tenant or user not found/i.test(message) ? 'DB_POOLER_USER_INVALID'
-        : /CPU time/i.test(message) ? 'WORKER_CPU_LIMIT' : 'UNKNOWN';
+        : /CPU time/i.test(message) ? 'WORKER_CPU_LIMIT'
+        : /Connection terminated|connection closed/i.test(message) ? 'DB_CONNECTION_TERMINATED'
+        : /not implemented|not supported|unsupported/i.test(message) ? 'RUNTIME_UNSUPPORTED'
+        : /is not a function/i.test(message) ? 'RUNTIME_TYPE_ERROR' : 'UNKNOWN';
       const allowed = ['28P01', '28000', '42501', '42P01', '42703', '53300', '57P01', 'CONNECT_TIMEOUT', 'CONNECTION_CLOSED', 'CONNECTION_ENDED', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT'];
-      console.error('db-diagnostic', { stage, elapsedMs: Date.now() - started, category, code: typeof code === 'string' && allowed.includes(code) ? code : 'UNCLASSIFIED' });
+      const target = new URL(env.DATABASE_URL);
+      console.error('db-diagnostic', { stage, handshake, host: target.hostname, port: target.port || '5432', elapsedMs: Date.now() - started, category, code: typeof code === 'string' && allowed.includes(code) ? code : 'UNCLASSIFIED' });
       throw error;
     } finally { await sql.end().catch(() => {}); }
   }
