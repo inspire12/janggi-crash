@@ -16,6 +16,7 @@ export type PlayerProfile = {
 };
 
 export async function getPlayer(userId: string) {
+  console.info('account-diagnostic', { stage: 'profile-query-start' });
   return getDatabase()
     .prepare(
       `SELECT id, email, display_name, elo, rank_score, wins, losses, draws, streak,

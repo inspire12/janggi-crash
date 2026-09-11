@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import postgres from 'postgres';
+import { Client } from 'pg';
 import { localTestingEnabled } from '@/lib/local-testing';
 
 type Value = string | number | boolean | null;
@@ -30,20 +30,40 @@ class Database {
     if (this.execute) return work(this);
     if (!env.DATABASE_URL) throw new Error('Supabase DATABASE_URL is not configured.');
     // A Worker request must not reuse another request's TCP socket.
-    const sql = postgres(env.DATABASE_URL, { prepare: false, max: 1, connect_timeout: 10, idle_timeout: 1, ssl: localTestingEnabled() ? false : 'require' });
+    const sql = new Client({ connectionString: env.DATABASE_URL, connectionTimeoutMillis: 8000, statement_timeout: 10000, ssl: localTestingEnabled() ? false : { rejectUnauthorized: true } });
+    // No implicit reconnect/replay: a failed write must not be executed twice.
+    sql.on('error', () => { /* query/connect promises report sanitized errors below */ });
+    const started = Date.now();
+    let stage = 'connect';
     try {
-      return await sql.begin(async tx => {
-        if (lock !== undefined) await tx`SELECT pg_advisory_xact_lock(${lock})`;
+      await sql.connect();
+      await sql.query('BEGIN');
+        stage = 'transaction';
+        if (lock !== undefined) await sql.query('SELECT pg_advisory_xact_lock($1)', [lock]);
         const db = new Database(async (text, values) => {
-          const rows = await tx.unsafe(text, values);
-          const results = rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) =>
+          const rows = await sql.query(text, values);
+          const results = rows.rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) =>
             [key, typeof value === 'string' && /^(?:created_at|updated_at|joined_at|terms_accepted_at|turn_started_at|member_count)$/.test(key) ? Number(value) : value],
           )));
-          return { success: true, results, meta: { changes: rows.count ?? 0 } };
+          return { success: true, results, meta: { changes: rows.rowCount ?? 0 } };
         });
-        return work(db);
-      }) as T;
-    } finally { await sql.end({ timeout: 1 }); }
+        const result = await work(db);
+        await sql.query('COMMIT');
+        return result;
+    } catch (error) {
+      if (stage === 'transaction') await sql.query('ROLLBACK').catch(() => {});
+      const code = (error as { code?: unknown } | null)?.code;
+      const message = error instanceof Error ? error.message : '';
+      const category = /subrequests/i.test(message) ? 'WORKER_SUBREQUEST_LIMIT'
+        : /password authentication|SASL/i.test(message) ? 'DB_AUTH_FAILED'
+        : /timeout|timed out/i.test(message) ? 'DB_TIMEOUT'
+        : /certificate|TLS|SSL/i.test(message) ? 'DB_TLS_FAILED'
+        : /Tenant or user not found/i.test(message) ? 'DB_POOLER_USER_INVALID'
+        : /CPU time/i.test(message) ? 'WORKER_CPU_LIMIT' : 'UNKNOWN';
+      const allowed = ['28P01', '28000', '42501', '42P01', '42703', '53300', '57P01', 'CONNECT_TIMEOUT', 'CONNECTION_CLOSED', 'CONNECTION_ENDED', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT'];
+      console.error('db-diagnostic', { stage, elapsedMs: Date.now() - started, category, code: typeof code === 'string' && allowed.includes(code) ? code : 'UNCLASSIFIED' });
+      throw error;
+    } finally { await sql.end().catch(() => {}); }
   }
   async batch(statements: Statement[], requireFirstChange = false) {
     return this.transaction(async db => {
