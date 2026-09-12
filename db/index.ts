@@ -28,9 +28,14 @@ class Database {
   }
   async transaction<T>(work: (db: Database) => Promise<T>, lock?: number): Promise<T> {
     if (this.execute) return work(this);
-    if (!env.DATABASE_URL) throw new Error('Supabase DATABASE_URL is not configured.');
+    const local = localTestingEnabled();
+    const hyperdrive = !local && env.HYPERDRIVE;
+    const connectionString = hyperdrive ? hyperdrive.connectionString : env.DATABASE_URL;
+    if (!connectionString) throw new Error('Database connection is not configured.');
     // A Worker request must not reuse another request's TCP socket.
-    const sql = new Client({ connectionString: env.DATABASE_URL, connectionTimeoutMillis: 8000, statement_timeout: 10000, ssl: localTestingEnabled() ? false : { rejectUnauthorized: true } });
+    // Hyperdrive's private binding handles TLS to the origin with verify-full.
+    // Do not initiate a second TLS handshake against the internal binding.
+    const sql = new Client({ connectionString, connectionTimeoutMillis: 8000, statement_timeout: 10000, ...(hyperdrive ? {} : { ssl: local ? false : { rejectUnauthorized: true } }) });
     // No implicit reconnect/replay: a failed write must not be executed twice.
     sql.on('error', () => { /* query/connect promises report sanitized errors below */ });
     const started = Date.now();
@@ -70,8 +75,7 @@ class Database {
         : /not implemented|not supported|unsupported/i.test(message) ? 'RUNTIME_UNSUPPORTED'
         : /is not a function/i.test(message) ? 'RUNTIME_TYPE_ERROR' : 'UNKNOWN';
       const allowed = ['28P01', '28000', '42501', '42P01', '42703', '53300', '57P01', 'CONNECT_TIMEOUT', 'CONNECTION_CLOSED', 'CONNECTION_ENDED', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT'];
-      const target = new URL(env.DATABASE_URL);
-      console.error('db-diagnostic', { stage, handshake, host: target.hostname, port: target.port || '5432', elapsedMs: Date.now() - started, category, code: typeof code === 'string' && allowed.includes(code) ? code : 'UNCLASSIFIED' });
+      console.error('db-diagnostic', { stage, handshake, transport: hyperdrive ? 'hyperdrive' : 'direct', elapsedMs: Date.now() - started, category, code: typeof code === 'string' && allowed.includes(code) ? code : 'UNCLASSIFIED' });
       throw error;
     } finally { await sql.end().catch(() => {}); }
   }

@@ -1,5 +1,6 @@
 declare namespace Cloudflare {
   interface Env {
+    HYPERDRIVE?: { connectionString: string };
     DATABASE_URL?: string;
     SUPABASE_URL?: string;
     SUPABASE_ANON_KEY?: string;

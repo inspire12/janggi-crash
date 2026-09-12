@@ -12,11 +12,19 @@ Supabase migrations are now authoritative. Do not run `db:generate` for producti
 - `SUPABASE_ANON_KEY`: browser-safe project key.
 - `SUPABASE_SERVICE_ROLE_KEY`: server-only, used to publish match notifications.
 
-Use the existing Seoul project. No paid resources or Hyperdrive are required
-by this configuration. Free-plan CPU and request quotas still apply; build
+Use the existing Seoul project and the free Hyperdrive binding. No paid resources
+are required by this configuration. Free-plan CPU and request quotas still apply; build
 success alone does not establish capacity for production load.
 
 ## Database
+
+Production uses the `HYPERDRIVE` binding (`janggi-supabase`) to connect to the
+Supabase direct endpoint. Hyperdrive verifies the Supabase CA and hostname with
+`verify-full`; query caching is disabled and the origin connection limit is 5.
+The public CA is `prod-ca-2021.crt` (expires April 26, 2031). Never disable
+certificate verification to work around a connection error. Rotate the uploaded
+CA before expiry. Local tests continue to use the loopback `DATABASE_URL`.
+Hyperdrive is available within Workers Free quotas; no paid plan was enabled.
 
 Back up any existing data before applying migrations. Apply all files under
 `supabase/migrations` in order using the existing manual GitHub Actions migration

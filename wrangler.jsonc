@@ -5,6 +5,11 @@
   "compatibility_date": "2026-05-15",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  "hyperdrive": [{
+    "binding": "HYPERDRIVE",
+    "id": "ea545cf3c76042a2b86f3b5f22a1a2dd",
+    "localConnectionString": "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+  }],
   "no_bundle": true,
   "build": { "command": "npm run build" },
   "assets": { "directory": "dist/client" },
