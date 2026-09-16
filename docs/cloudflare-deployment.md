@@ -39,7 +39,39 @@ The app now uses Kakao OAuth, not email OTP. Follow `docs/kakao-login.md` to
 configure provider credentials and the two distinct callback URLs. SMTP is not
 required. Provider activation and a real Kakao login must be verified separately.
 
-## Cloudflare Git build settings
+## GitHub Actions tag releases
+
+`main` pushes and pull requests run CI only. Pushing a stable `vMAJOR.MINOR.PATCH`
+tag runs the same app and database checks, then the `production` deployment job.
+The tag must point to a commit merged into `main`. No tag is created automatically.
+The tested `dist` artifact is deployed without rebuilding after migrations.
+
+Required GitHub Actions secrets (repository or `production` environment):
+- `CLOUDFLARE_API_TOKEN`: dedicated token scoped to the production Cloudflare account,
+  with Workers deployment permissions. Do not copy a personal Wrangler OAuth token.
+- `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`.
+
+Set the Cloudflare token in GitHub Settings → Secrets and variables → Actions.
+Never paste it into chat or commit it. The workflow checks missing secrets before
+migrations. Protect the production environment and release tags against untrusted changes.
+
+Example (choose a new, unused version):
+```sh
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+Disable automatic production-branch deployments in Cloudflare Workers Builds
+(Worker → Settings → Builds) to prevent `main` pushes from bypassing this CI gate.
+This repository workflow cannot itself disable a dashboard Git integration.
+Do not remove existing Worker runtime secrets or Hyperdrive bindings.
+
+Migrations and Worker deployment serialize with the manual Supabase workflow.
+If Worker upload fails after migrations, fix and rerun the tagged workflow; schema
+changes are not automatically reversed. Use backward-compatible migrations.
+Smoke checks cover public HTTP responses, not authenticated two-player gameplay.
+
+## Legacy Cloudflare Git build settings (disable automatic builds for tag releases)
 
 - Production branch: `main`
 - Build command: `npm run build`
