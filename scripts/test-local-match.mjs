@@ -34,7 +34,17 @@ assert.equal((await a('/api/matchmaking', { action: 'join', formation, timeContr
 assert.equal((await b('/api/matchmaking', { action: 'join', formation, timeControl: 'blitz' })).queued, true);
 console.log('PASS: standard and blitz queues stay separate');
 await b('/api/matchmaking', { action: 'cancel' });
-const paired = await b('/api/matchmaking', { action: 'join', formation, timeControl: 'standard' });
+await b('/api/matchmaking', { action: 'join', timeControl: 'standard' });
+const offerA=await a('/api/matchmaking'), offerB=await b('/api/matchmaking');
+assert.equal(offerA.matchId,null);
+assert.equal(offerA.offer.id,offerB.offer.id);
+assert.equal(offerA.offer.opponent.displayName,(await b('/api/me')).displayName);
+assert.equal(offerB.offer.opponent.displayName,(await a('/api/me')).displayName);
+assert.deepEqual(Object.keys(offerA.offer.opponent).sort(),['displayName','draws','elo','losses','rank','wins']);
+await a('/api/matchmaking',{action:'accept',offerId:offerA.offer.id,formation});
+assert.equal((await a('/api/matchmaking')).matchId,null);
+const paired=await b('/api/matchmaking',{action:'accept',offerId:offerB.offer.id,formation});
+console.log('PASS: both players must choose formations and accept before the clock starts');
 assert.ok(paired.matchId);
 assert.equal((await a('/api/matchmaking')).matchId, paired.matchId);
 const matchPath = `/api/matches?id=${paired.matchId}`;
@@ -66,3 +76,13 @@ assert.ok(loserRank.after_score <= loserRank.before_score);
 assert.deepEqual((await opponent(matchPath)).rankResult,ranked.rankResult);
 assert.ok((await a(`/api/records?id=${paired.matchId}`)).events.length >= 4);
 console.log('PASS: matching, move sync, takeback rejection/acceptance, resignation and record persistence');
+await a('/api/matchmaking',{action:'join',timeControl:'standard'});
+await b('/api/matchmaking',{action:'join',timeControl:'standard'});
+const declinedOffer=(await a('/api/matchmaking')).offer;
+await a('/api/matchmaking',{action:'accept',offerId:declinedOffer.id,formation});
+await b('/api/matchmaking',{action:'decline',offerId:declinedOffer.id});
+for(const api of [a,b]) {
+  const state=await api('/api/matchmaking');
+  assert.equal(state.matchId,null);assert.equal(state.offer,null);assert.equal(state.queued,false);
+}
+console.log('PASS: decline after the other player accepts returns both players to idle without creating a game');

@@ -6,7 +6,7 @@ export type RecordState = {
 };
 export type RecordEvent = {
   seq: number;
-  kind: 'start' | 'checkpoint' | 'move' | 'takeback' | 'resign' | 'timeout';
+  kind: 'start' | 'checkpoint' | 'move' | 'takeback' | 'resign' | 'timeout' | 'disconnect';
   details: { undoneSeq?: number; [key: string]: unknown };
   state: RecordState;
   created_at: number;

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEve
 import { Flag, FlaskConical, RotateCcw, Sparkles, Swords, Undo2, Volume2, VolumeX } from 'lucide-react';
 import Link from 'next/link';
 import MatchInfo from '@/components/match-info';
+import LastMoveMarks from '@/components/last-move-marks';
+import { usePieceHop } from '@/lib/use-piece-hop';
 import ResignDialog from '@/components/resign-dialog';
 import { formatClock, readClock, timeControls, type TimeControl } from '@/lib/game-clock';
 import JanggiBoardMarks from '@/components/janggi-board-marks';
@@ -71,6 +73,7 @@ export default function PracticePage() {
       tier: number;
     } | null>(null),
     [status, setStatus] = useState('');
+  const hopBoardRef=usePieceHop(pieces,cinema);
   const [choFormation, setChoFormation] = useState<Formation>('horse-elephant-elephant-horse');
   const [hanFormation, setHanFormation] = useState<Formation>('elephant-horse-horse-elephant');
   const [setupOpen, setSetupOpen] = useState(true);
@@ -426,6 +429,7 @@ export default function PracticePage() {
           <div className="board-frame">
             <div
               className={`board ${illegalMove ? 'illegal-move' : ''}`}
+              ref={hopBoardRef}
               role="grid"
               aria-label="장기판 연출 프로토타입"
               onClick={handleBoardClick}
@@ -433,6 +437,7 @@ export default function PracticePage() {
               tabIndex={0}
             >
               <div className="river-mark">楚 河　　漢 界</div>
+              {!trialSnapshot && <LastMoveMarks previous={history.at(-1)?.pieces ?? null} current={pieces} />}
               <div className="palace palace-top" />
               <div className="palace palace-bottom" />
               <JanggiBoardMarks />
@@ -448,6 +453,7 @@ export default function PracticePage() {
               {pieces.map((p) => (
                 <button
                   key={p.id}
+                  data-piece-id={p.id}
                   onClick={() => choose(p)}
                   className={`piece ${p.side} piece-${p.kind} ${
                     ['pawn', 'guard'].includes(p.kind)

@@ -4,9 +4,13 @@ import Link from 'next/link';
 import { resultLabel } from '@/lib/result-label';
 import { rankForScore } from '@/lib/rating';
 import MatchInfo from '@/components/match-info';
+import LastMoveMarks from '@/components/last-move-marks';
+import { armGameAlerts, gameAlert } from '@/lib/game-alerts';
+import { usePieceHop } from '@/lib/use-piece-hop';
 import ResignDialog from '@/components/resign-dialog';
+import RematchPanel from '@/components/rematch-panel';
 import JanggiBoardMarks from '@/components/janggi-board-marks';
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { ArrowLeft, Flag, FlaskConical, MessageCircle, Radio, Send, Shield, Undo2, UserX } from 'lucide-react';
 import { applyMove, isInCheck, legalMoves, type Piece, pieceLabel, type Point, type Side } from '@/lib/janggi';
 import { createClient, type RealtimeChannel } from '@supabase/supabase-js';
@@ -14,7 +18,7 @@ import { createClient, type RealtimeChannel } from '@supabase/supabase-js';
 type Player = { id?: string; side?: Side; displayName?: string; elo?: number; rank?: { name: string; key: string } };
 type Payload = {
   rankResult?: {before_score:number;after_score:number} | null;
-  match: { id: string; rated: boolean; status: 'active' | 'finished'; turn: Side; board: Piece[]; version: number; winnerSide: Side | null; resultReason: string | null; choTimeMs: number; hanTimeMs: number; clockSyncedAt: number; periodMs: number; canTakeback: boolean; takebackRequested: boolean; takebackRequestedByMe: boolean; opponentAllowsTakeback: boolean };
+  match: { id: string; rated: boolean; status: 'active' | 'finished'; turn: Side; board: Piece[]; previousBoard:Piece[]|null; version: number; winnerSide: Side | null; resultReason: string | null; choTimeMs: number; hanTimeMs: number; clockSyncedAt: number; periodMs: number; canTakeback: boolean; takebackRequested: boolean; takebackRequestedByMe: boolean; opponentAllowsTakeback: boolean };
   you: Player & { side: Side };
   // Count excludes accepted takebacks; version is not a move counter.
   opponent: Player;
@@ -22,10 +26,19 @@ type Payload = {
 
 export default function OnlineBattle({ matchId }: { matchId: string }) {
   const [resignOpen, setResignOpen] = useState(false);
+  const lastTurn=useRef<Side|null>(null);
+  useEffect(()=>{
+    const arm=()=>armGameAlerts();
+    window.addEventListener('pointerdown',arm,{once:true});
+    window.addEventListener('keydown',arm,{once:true});
+    return()=>{window.removeEventListener('pointerdown',arm);window.removeEventListener('keydown',arm);};
+  },[]);
   const [data, setData] = useState<Payload | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [connectionError,setConnectionError]=useState('');
+  const [presence,setPresence]=useState<{opponentAway:boolean;remainingMs:number;syncedAt:number}|null>(null);
   const [now, setNow] = useState(0);
   const [illegalMove, setIllegalMove] = useState(false);
   const [trialBoard, setTrialBoard] = useState<Piece[] | null>(null);
@@ -33,12 +46,15 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
 
   const refresh = useCallback(async () => {
     const started = performance.now();
-    const response = await fetch(`/api/matches?id=${encodeURIComponent(matchId)}`, { cache: 'no-store' });
+    const response = await fetch(`/api/matches?id=${encodeURIComponent(matchId)}`, { cache: 'no-store',signal:AbortSignal.timeout(8000) });
     const next = (await response.json()) as Payload & { error?: string };
     if (!response.ok) throw new Error(next.error ?? '대국을 불러오지 못했습니다.');
     // Anchor server remaining time to a monotonic client clock, not the user's wall clock.
     next.match.clockSyncedAt = (started + performance.now()) / 2;
+    if(lastTurn.current && lastTurn.current!==next.match.turn && next.match.turn===next.you.side && next.match.status==='active')gameAlert('turn');
+    lastTurn.current=next.match.turn;
     setData(next);
+    if(next.match.status==='finished'){setTrialBoard(null);setSelected(null);}
   }, [matchId]);
 
   useEffect(() => {
@@ -46,12 +62,30 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
       () => void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : '연결에 실패했습니다.')),
       0,
     );
-    const timer = window.setInterval(() => void refresh().catch(() => {}), 5000);
+    const retry=()=>void refresh().catch(()=>setConnectionError('대국 정보를 다시 불러오는 중입니다. 연결을 확인해 주세요.'));
+    const timer = window.setInterval(retry, 5000);
+    window.addEventListener('online',retry);
     return () => {
       window.clearTimeout(first);
       window.clearInterval(timer);
+      window.removeEventListener('online',retry);
     };
   }, [refresh]);
+  useEffect(()=>{
+    if(data?.match.status==='finished')return;
+    let stopped=false;
+    let timer:ReturnType<typeof setTimeout>;
+    const ping=async()=>{
+      try {
+        const r=await fetch('/api/matches',{method:'POST',signal:AbortSignal.timeout(8000),headers:{'content-type':'application/json'},body:JSON.stringify({matchId,action:'heartbeat'})});
+        if(!r.ok)throw Error('heartbeat failed');
+        const p=await r.json() as {finished:boolean;opponentAway:boolean;remainingMs:number};
+        if(!stopped){setConnectionError('');setPresence({...p,syncedAt:performance.now()});if(p.finished){await refresh();return;}}
+      }catch{if(!stopped)setConnectionError('서버 연결을 확인하고 있습니다. 30초 이상 접속이 끊기면 패배 처리됩니다.');}
+      if(!stopped)timer=setTimeout(ping,5000);
+    };
+    void ping();return()=>{stopped=true;clearTimeout(timer);};
+  },[matchId,data?.match.status,refresh]);
   useEffect(() => {
     let channel: RealtimeChannel | null = null;
     let cancelled = false;
@@ -105,6 +139,7 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
   }, [illegalMove]);
 
   const displayBoard = useMemo(() => trialBoard ?? data?.match.board ?? [], [trialBoard, data?.match]);
+  const hopBoardRef=usePieceHop(displayBoard);
   const activeTurn = trialBoard ? trialTurn : data?.you.side;
   const selectedPiece = displayBoard.find((piece) => piece.id === selected);
   const targets = useMemo(
@@ -209,7 +244,7 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
     setSelected(null);
   }
 
-  if (!data) return <main className="battle-loading">{error || '전장을 불러오는 중…'}</main>;
+  if (!data) return <main className="battle-loading"><p>{connectionError || error || '전장을 불러오는 중…'}</p><button onClick={()=>void refresh().catch(()=>setError('대국에 연결하지 못했습니다. 다시 시도해 주세요.'))}>다시 연결</button><Link href="/lobby">로비로</Link></main>;
   const result = data.match.status === 'finished'
     ? resultLabel(data.match.resultReason, data.match.winnerSide ? data.match.winnerSide === data.you.side : null)
     : null;
@@ -222,15 +257,18 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
         <div className="live-state"><Radio size={14} /> 실시간 대국</div>
         <Link className="text-btn" href="/lobby"><ArrowLeft size={15} /> 로비</Link>
       </header>
+      {connectionError && <p className="status-strip" role="alert">{connectionError}</p>}
+      {data.match.status==='active' && presence?.opponentAway && <section className="takeback-request" aria-live="polite"><span>상대 재접속 대기 · {Math.max(0,Math.ceil((presence.remainingMs-Math.max(0,now-presence.syncedAt))/1000))}초<br />대기 중 둬보기는 실제 대국에 반영되지 않습니다.</span><button onClick={toggleTrial}>{trialBoard?'둬보기 종료':'둬보기'}</button></section>}
       <section className="online-match-layout">
         <OnlinePlayer player={data.opponent} side={data.you.side === 'cho' ? 'han' : 'cho'} active={!isMyTurn && !result} label="상대" timeMs={clock(data.you.side === 'cho' ? 'han' : 'cho')} periodMs={data.match.periodMs} />
         <div className="arena online-arena">
           <div className="turn-indicator"><span className={trialBoard ? trialTurn : data.match.turn} />{trialBoard ? `${trialTurn === 'cho' ? '초' : '한'} 시험 수` : result ?? (isMyTurn ? '당신의 차례' : '상대의 차례')}{trialBoard && <b className="trial-badge">둬보기</b>}</div>
           {data.match.takebackRequested && <div className="takeback-request">{data.match.takebackRequestedByMe ? <span>상대의 무르기 응답을 기다리고 있습니다.</span> : <><span>상대가 직전 수를 무르자고 요청했습니다.</span><div><button onClick={() => void matchAction('takeback-accept')}>수락</button><button onClick={() => void matchAction('takeback-reject')}>거절</button></div></>}</div>}
-          <div className="board-frame"><div className={`board ${illegalMove ? 'illegal-move' : ''}`} role="grid" aria-label="온라인 장기판" onClick={handleBoardClick} onKeyDown={handleBoardKeyDown} tabIndex={0}>
+          <div className="board-frame"><div className={`board ${illegalMove ? 'illegal-move' : ''}`} ref={hopBoardRef} role="grid" aria-label="온라인 장기판" onClick={handleBoardClick} onKeyDown={handleBoardKeyDown} tabIndex={0}>
             <div className="river-mark">楚 河　　漢 界</div><div className="palace palace-top" /><div className="palace palace-bottom" /><JanggiBoardMarks />
+            {!trialBoard && <LastMoveMarks previous={data.match.previousBoard} current={data.match.board} flipped={data.you.side==='han'} />}
             {targets.map((point) => <button key={`${point.x}-${point.y}`} aria-label={`${point.x + 1}열 ${point.y + 1}행으로 이동`} className="move-target" onClick={() => void move(point)} style={{ left: `${(data.you.side === 'han' ? 8 - point.x : point.x) * 12.5}%`, top: `${(data.you.side === 'han' ? 9 - point.y : point.y) * (100 / 9)}%` }} />)}
-            {displayBoard.map((piece) => <button key={piece.id} onClick={() => choose(piece)} className={`piece ${piece.side} piece-${piece.kind} ${['pawn', 'guard'].includes(piece.kind) ? 'piece-small' : piece.kind === 'king' ? 'piece-king' : 'piece-medium'} ${selected === piece.id ? 'selected' : ''}`} style={{ left: `${(data.you.side === 'han' ? 8 - piece.x : piece.x) * 12.5}%`, top: `${(data.you.side === 'han' ? 9 - piece.y : piece.y) * (100 / 9)}%` }}><span>{pieceLabel(piece)}</span></button>)}
+            {displayBoard.map((piece) => <button key={piece.id} data-piece-id={piece.id} onClick={() => choose(piece)} className={`piece ${piece.side} piece-${piece.kind} ${['pawn', 'guard'].includes(piece.kind) ? 'piece-small' : piece.kind === 'king' ? 'piece-king' : 'piece-medium'} ${selected === piece.id ? 'selected' : ''}`} style={{ left: `${(data.you.side === 'han' ? 8 - piece.x : piece.x) * 12.5}%`, top: `${(data.you.side === 'han' ? 9 - piece.y : piece.y) * (100 / 9)}%` }}><span>{pieceLabel(piece)}</span></button>)}
             {result && <output className={`mate-banner ${data.match.winnerSide}`}><span>대국 종료</span><strong>{result}</strong><b>{!data.match.rated ? '친구 대국 · 랭크 변동 없음' : data.match.winnerSide === data.you.side ? '전적 반영 완료' : '다음 대국을 준비하세요'}</b></output>}
           </div></div>
           {(error || trialBoard) && <div className={`status-strip ${illegalMove ? 'illegal-status' : ''}`} aria-live="polite"><span className="status-dot" /><p>{error || '둬보기 중 · 실제 대국에는 반영되지 않습니다.'}</p></div>}
@@ -244,6 +282,7 @@ export default function OnlineBattle({ matchId }: { matchId: string }) {
       </section>
       <MatchInfo board={data.match.board} moves={(data.match as Payload['match'] & {moveCount?:number|null}).moveCount ?? null} />
       {result && data.rankResult && <RankUpdate before={data.rankResult.before_score} after={data.rankResult.after_score} />}
+      {result && <RematchPanel matchId={matchId} />}
       <BattleChat matchId={matchId} youId={data.you.id ?? ''} opponentId={data.opponent.id ?? ''} />
     </main>
   );

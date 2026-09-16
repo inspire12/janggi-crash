@@ -1,4 +1,5 @@
-import { authClient } from '@/app/auth';
+import { authClient, safePath } from '@/app/auth';
+import { cookies } from 'next/headers';
 import { env } from 'cloudflare:workers';
 
 export async function POST(request: Request) {
@@ -21,6 +22,9 @@ export async function POST(request: Request) {
       },
     });
     if (error || !data.url) throw new Error('OAuth initiation failed');
+    const body=await request.json().catch(()=>null) as {returnTo?:unknown}|null;
+    const returnTo=typeof body?.returnTo==='string'?safePath(body.returnTo):'/lobby';
+    (await cookies()).set('janggi_return_to',returnTo,{httpOnly:true,secure:new URL(request.url).protocol==='https:',sameSite:'lax',path:'/',maxAge:600});
     return Response.json({ url: data.url }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch {
     return Response.json({ error: '로그인 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.' }, { status: 503 });

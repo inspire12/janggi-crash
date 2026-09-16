@@ -7,7 +7,8 @@ export default function LoginForm({ failed = false }: { failed?: boolean }) {
   async function login() {
     setBusy(true); setError('');
     try {
-      const response = await fetch('/api/auth', { method: 'POST' });
+      const returnTo=new URLSearchParams(window.location.search).get('return_to') ?? '/lobby';
+      const response = await fetch('/api/auth', { method: 'POST',headers:{'content-type':'application/json'},body:JSON.stringify({returnTo}) });
       const result = await response.json() as { url?: string; error?: string };
       if (!response.ok || !result.url) throw new Error(result.error ?? '로그인을 시작하지 못했습니다.');
       window.location.assign(result.url);

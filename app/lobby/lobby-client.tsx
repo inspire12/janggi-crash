@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bell, Bot, ChevronRight, CircleUserRound, Clock3, Gift, History, LogOut, Menu, Settings, Shield, ShoppingBag, Swords, Trophy, UserRoundPlus, Users } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import FriendPanel from './friend-panel';
@@ -10,8 +10,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { formations, type Formation } from '@/lib/janggi';
 import { Switch } from '@/components/ui/switch';
 import { timeControls, type TimeControl } from '@/lib/game-clock';
+import { armGameAlerts, gameAlert } from '@/lib/game-alerts';
 
 type Profile = { email: string; displayName: string; elo: number; wins: number; losses: number; draws: number; streak: number; games: number; winRate: number; allowTakebackRequests: boolean; rank: { name: string; key: string } };
+type MatchOffer = {id:string;rated:boolean;expiresAt:number;serverNow:number;formation:Formation|null;accepted:boolean;opponentAccepted:boolean;opponent:{displayName:string;elo:number;rank:string;wins:number;losses:number;draws:number}|null};
 
 const tabItems = [
   { value: 'match', label: '대국', icon: Swords },
@@ -28,71 +30,116 @@ export default function LobbyClient({ authenticated, registered, initialTab = 'm
   const [matchId, setMatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [connectionError, setConnectionError] = useState('');
+  const [synced, setSynced] = useState(false);
+  const enterMatchedGame = useRef(false);
+  const refreshInFlight = useRef<Promise<void>|null>(null);
   const [formation, setFormation] = useState<Formation>('horse-elephant-elephant-horse');
-  const [formationOpen, setFormationOpen] = useState(false);
+  const [offer, setOffer] = useState<MatchOffer|null>(null);
+  const hasOffer=Boolean(offer);
+  const lastOffer=useRef<string|null>(null);
   const [timeControl, setTimeControl] = useState<TimeControl>('standard');
 
-  const refreshQueue = useCallback(async (enterMatchedGame = false) => {
-    const response = await fetch('/api/matchmaking', { cache: 'no-store' });
+  const refreshQueue = useCallback(() => {
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const work = async () => {
+    try {
+    const response = await fetch('/api/matchmaking', { cache: 'no-store', signal: AbortSignal.timeout(8000) });
     if (!response.ok) throw new Error('대기열 상태를 불러오지 못했습니다.');
-    const data = (await response.json()) as { queued: boolean; matchId: string | null; timeControl: TimeControl | null };
+    const data = (await response.json()) as { queued: boolean; matchId: string | null; timeControl: TimeControl | null; offer:MatchOffer|null };
     if (data.timeControl) setTimeControl(data.timeControl);
-    if (data.matchId && enterMatchedGame) window.location.assign(`/battle/${data.matchId}`);
+    if (data.matchId && enterMatchedGame.current) window.location.assign(`/battle/${data.matchId}`);
+    if(data.queued || data.offer) enterMatchedGame.current=true;
+    setConnectionError('');
+    setSynced(true);
     setMatchId(data.matchId);
     setQueued(data.queued);
+    if(lastOffer.current && !data.offer && !data.matchId) setError('매칭이 거절되었거나 응답 시간이 만료되었습니다. 다시 신청해 주세요.');
+    if(data.offer?.formation) setFormation(data.offer.formation);
+    if(data.offer && lastOffer.current!==data.offer.id)gameAlert('match');
+    lastOffer.current=data.offer?.id ?? null;
+    setOffer(data.offer);
+    } catch {
+      setConnectionError('연결이 원활하지 않습니다. 매칭 상태를 다시 확인하고 있습니다.');
+    }
+    };
+    const promise=work().finally(()=>{refreshInFlight.current=null;});
+    refreshInFlight.current=promise;
+    return promise;
   }, []);
 
   useEffect(() => {
     if (!registered) return;
     const timer = window.setTimeout(() => {
-      Promise.all([fetch('/api/me', { cache: 'no-store' }).then((response) => {
+      fetch('/api/me', { cache: 'no-store' }).then((response) => {
         if (!response.ok) throw new Error('계정 정보를 불러오지 못했습니다.');
         return response.json();
-      }), refreshQueue(false)])
-        .then(([me]) => setProfile(me as Profile))
+      })
+        .then((me) => setProfile(me as Profile))
         .catch((cause) => setError(cause instanceof Error ? cause.message : '연결에 실패했습니다.'));
     }, 0);
     return () => window.clearTimeout(timer);
   }, [refreshQueue, registered]);
 
   useEffect(() => {
-    if (!queued) return;
-    const timer = window.setInterval(() => void refreshQueue(true).catch(() => {}), 1500);
-    return () => window.clearInterval(timer);
-  }, [queued, refreshQueue]);
+    if (!registered) return;
+    let stopped=false;
+    let timer:ReturnType<typeof setTimeout>;
+    const poll=async()=>{await refreshQueue();if(!stopped)timer=setTimeout(poll,queued || hasOffer ? 1500 : 5000);};
+    void poll();
+    const reconnect=()=>{if(document.visibilityState==='visible')void refreshQueue();};
+    const offline=()=>setConnectionError('인터넷 연결이 끊겼습니다. 연결되면 매칭 상태를 자동으로 확인합니다.');
+    window.addEventListener('online',reconnect);
+    window.addEventListener('offline',offline);
+    document.addEventListener('visibilitychange',reconnect);
+    return () => {stopped=true;clearTimeout(timer);window.removeEventListener('online',reconnect);window.removeEventListener('offline',offline);document.removeEventListener('visibilitychange',reconnect);};
+  }, [registered, queued, hasOffer, refreshQueue]);
 
-  async function changeQueue(action: 'join' | 'cancel') {
+  useEffect(()=>{
+    const arm=()=>armGameAlerts();
+    window.addEventListener('pointerdown',arm,{once:true});
+    window.addEventListener('keydown',arm,{once:true});
+    return()=>{window.removeEventListener('pointerdown',arm);window.removeEventListener('keydown',arm);};
+  },[]);
+
+  async function changeQueue(action: 'join' | 'cancel' | 'accept' | 'decline') {
+    armGameAlerts();
     if (!registered) {
       window.location.assign(accountPath);
       return;
     }
     setBusy(true);
+    enterMatchedGame.current=true;
     setError('');
+    let responseReceived=false;
     try {
-      const response = await fetch('/api/matchmaking', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, formation, timeControl }) });
+      const response = await fetch('/api/matchmaking', { method: 'POST', signal:AbortSignal.timeout(8000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, ...(action==='accept'?{formation}:{}), offerId:offer?.id, timeControl }) });
       const data = (await response.json()) as { queued?: boolean; matchId?: string; error?: string };
+      responseReceived=true;
       if (!response.ok) throw new Error(data.error ?? '요청에 실패했습니다.');
       if (data.matchId) return window.location.assign(`/battle/${data.matchId}`);
-      setQueued(Boolean(data.queued));
-      setFormationOpen(false);
+      await refreshQueue();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '요청에 실패했습니다.');
+      if(responseReceived)setError(cause instanceof Error ? cause.message : '요청에 실패했습니다.');
+      else setConnectionError('요청 결과를 확인하지 못했습니다. 서버 상태를 다시 확인하고 있습니다.');
     } finally {
+      // Reconcile even when the POST response was lost; never replay a mutation.
+      void refreshQueue();
       setBusy(false);
     }
   }
 
   return (
     <main className="mobile-lobby-shell">
-      <OnlineFormationDialog open={formationOpen} value={formation} onOpenChange={setFormationOpen} onChange={setFormation} onConfirm={() => void changeQueue('join')} busy={busy} />
+      {offer && <OnlineFormationDialog key={offer.id} offer={offer} value={formation} onChange={setFormation} onConfirm={() => void changeQueue('accept')} onReject={()=>void changeQueue('decline')} busy={busy || Boolean(connectionError)} error={connectionError || error} />}
       <Tabs defaultValue={initialTab} className="lobby-tabs" onValueChange={(value) => { if (value === 'review' && !reviewContent) window.location.assign('/review'); }}>
         <LobbyHeader profile={profile} onProfileChange={setProfile} />
         <div className="lobby-main">
           {!registered && <p>{authenticated ? <>대국 전에 <Link href="/join">닉네임 설정과 이용 동의</Link>를 완료해 주세요.</> : <>온라인 대국을 시작하려면 <Link href="/login">로그인</Link>해 주세요.</>}</p>}
           <TabsContent value="match">
             <div className="lobby-greeting lobby-match-heading"><h1>대국실</h1></div>
-            <fieldset className="formation-side" disabled={queued || busy || Boolean(matchId)}><legend>대국 시간</legend><div className="formation-options">{(Object.keys(timeControls) as TimeControl[]).map((value) => <button type="button" key={value} aria-pressed={timeControl === value} className={timeControl === value ? 'selected' : ''} onClick={() => setTimeControl(value)}>{timeControls[value].label}</button>)}</div></fieldset>
-            <MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy} error={error} formation={formation} onQueue={changeQueue} onChooseFormation={() => registered ? setFormationOpen(true) : window.location.assign(accountPath)} />
+            <fieldset className="formation-side" disabled={queued || busy || Boolean(matchId) || Boolean(offer)}><legend>대국 시간</legend><div className="formation-options">{(Object.keys(timeControls) as TimeControl[]).map((value) => <button type="button" key={value} aria-pressed={timeControl === value} className={timeControl === value ? 'selected' : ''} onClick={() => setTimeControl(value)}>{timeControls[value].label}</button>)}</div></fieldset>
+            <MatchTab profile={profile} matchId={matchId} queued={queued} busy={busy || Boolean(offer) || (registered && (!synced || Boolean(connectionError)))} error={connectionError || error} onQueue={changeQueue} onChooseFormation={() => void changeQueue('join')} />
           </TabsContent>
           <TabsContent value="review">{reviewContent ?? <p>내 기보를 불러오는 중…</p>}</TabsContent>
           <TabsContent value="friends">{registered ? <CommunityTab /> : <EmptyTab icon={Users} eyebrow="FRIENDS" title="친구와 대국하기" text="로그인 후 계정 설정을 완료하면 친구 기능을 사용할 수 있어요." action={authenticated ? '계정 설정 완료하기' : '로그인'} href={accountPath} />}</TabsContent>
@@ -152,17 +199,28 @@ function ProfileSheet({ profile, onProfileChange }: { profile: Profile | null; o
   </SheetContent>;
 }
 
-function MatchTab({ profile, matchId, queued, busy, error, formation, onQueue, onChooseFormation }: { profile: Profile | null; matchId: string | null; queued: boolean; busy: boolean; error: string; formation: Formation; onQueue: (action: 'join' | 'cancel') => Promise<void>; onChooseFormation: () => void }) {
-  const formationLabel = formations.find((item) => item.value === formation)?.label;
+function MatchTab({ profile, matchId, queued, busy, error, onQueue, onChooseFormation }: { profile: Profile | null; matchId: string | null; queued: boolean; busy: boolean; error: string; onQueue: (action: 'join' | 'cancel') => Promise<void>; onChooseFormation: () => void }) {
   return <div className="match-tab-content">
-    {matchId && <section className="resume-match-card"><div><span>두던 대국이 있어요</span><strong>이어서 둘까요?</strong><small><Clock3 size={13} /> 마지막 상태 그대로 보관되어 있어요.</small></div><Link href={`/battle/${matchId}`}>이어서 두기 <ChevronRight /></Link></section>}
-    <section className="quick-match-card"><div className="quick-rank"><div className={`rank-emblem ${profile?.rank.key ?? ''}`}><Shield size={27} /></div><div><span>나의 기력</span><strong>{profile?.elo ?? '—'} <small>ELO</small></strong><em>{profile?.rank.name ?? '불러오는 중'}</em></div></div>{queued && <div className="queued-formation"><span>선택 포진</span><strong>{formationLabel}</strong></div>}<button className={`match-button ${queued ? 'searching' : ''}`} disabled={busy || Boolean(matchId)} onClick={() => queued ? void onQueue('cancel') : onChooseFormation()}><Swords size={21} />{busy ? '연결 중…' : queued ? '상대 찾는 중 · 취소' : matchId ? '진행 중인 대국이 있어요' : '바로 대국하기'}</button>{queued && <p className="queue-message"><i /> 포진을 잠그고 비슷한 실력의 상대를 찾고 있어요.</p>}{error && <p className="form-error">{error}</p>}</section>
+    {matchId && <section className="resume-match-card"><div><span>두던 대국이 있어요</span><strong>이어서 둘까요?</strong><small><Clock3 size={13} /> 마지막 상태 그대로 보관되어 있어요.</small></div><a href={`/battle/${encodeURIComponent(matchId)}`}>이어서 두기 <ChevronRight /></a></section>}
+    <section className="quick-match-card"><div className="quick-rank"><div className={`rank-emblem ${profile?.rank.key ?? ''}`}><Shield size={27} /></div><div><span>나의 기력</span><strong>{profile?.elo ?? '—'} <small>ELO</small></strong><em>{profile?.rank.name ?? '불러오는 중'}</em></div></div><button className={`match-button ${queued ? 'searching' : ''}`} disabled={busy || Boolean(matchId)} onClick={() => queued ? void onQueue('cancel') : onChooseFormation()}><Swords size={21} />{busy ? '연결 중…' : queued ? '상대 찾는 중 · 취소' : matchId ? '진행 중인 대국이 있어요' : '바로 대국하기'}</button>{queued && <p className="queue-message"><i /> 상대를 찾고 있어요. 매칭 후 포진을 선택하고 수락해 주세요.</p>}{error && <p className="form-error">{error}</p>}</section>
     <section className="live-rooms-section"><div className="section-heading"><h2>관전</h2><span>준비 중</span></div></section>
   </div>;
 }
 
-function OnlineFormationDialog({ open, value, onOpenChange, onChange, onConfirm, busy }: { open: boolean; value: Formation; onOpenChange: (open: boolean) => void; onChange: (formation: Formation) => void; onConfirm: () => void; busy: boolean }) {
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="online-formation-dialog"><DialogHeader><span className="formation-eyebrow">ONLINE FORMATION</span><DialogTitle>내 포진 선택</DialogTitle><DialogDescription>매칭이 시작되면 포진은 잠기며, 상대의 포진은 대국판에서 공개됩니다.</DialogDescription></DialogHeader><div className="online-formation-options">{formations.map((item) => <button type="button" key={item.value} className={value === item.value ? 'selected' : ''} aria-pressed={value === item.value} onClick={() => onChange(item.value)}><span><i>車</i>{item.order.map((kind, index) => <b key={`${kind}-${index}`}>{kind === 'horse' ? '馬' : '象'}</b>)}<i>車</i></span><strong>{item.label}</strong></button>)}</div><button className="formation-start" disabled={busy} onClick={onConfirm}><Swords size={18} />{busy ? '매칭 준비 중…' : '이 포진으로 상대 찾기'}</button></DialogContent></Dialog>;
+function MatchOpponent({opponent}:{opponent:MatchOffer['opponent']}) {
+  if(!opponent) return <output>상대 정보를 불러오지 못했습니다.</output>;
+  const games=opponent.wins+opponent.losses+opponent.draws;
+  const winRate=games?Math.round(opponent.wins/games*100):null;
+  return <section className="match-offer-opponent" aria-label="매칭 상대 정보">
+    <div className="match-offer-opponent-heading"><Shield size={28} aria-hidden="true" /><div><small>이번 대국 상대</small><h3>{opponent.displayName}</h3></div><strong>{opponent.rank}</strong></div>
+    <div className="match-offer-opponent-stats"><span><b>{opponent.elo}</b> ELO</span><span>{opponent.wins}승 {opponent.losses}패 {opponent.draws}무</span><span>{winRate===null?'첫 대국':'승률 '+winRate+'%'}</span></div>
+  </section>;
+}
+
+function OnlineFormationDialog({ offer, value, onChange, onConfirm, onReject, busy, error }: { offer:MatchOffer; value: Formation; onChange: (formation: Formation) => void; onConfirm: () => void; onReject:()=>void; busy: boolean; error:string }) {
+  const [seconds,setSeconds]=useState(Math.max(0,Math.ceil((offer.expiresAt-offer.serverNow)/1000)));
+  useEffect(()=>{const end=performance.now()+Math.max(0,offer.expiresAt-offer.serverNow);const tick=()=>setSeconds(Math.max(0,Math.ceil((end-performance.now())/1000)));tick();const timer=window.setInterval(tick,250);return ()=>window.clearInterval(timer);},[offer.expiresAt,offer.serverNow]);
+  return <Dialog open onOpenChange={(open)=>{if(!open && !busy) onReject();}}><DialogContent className="online-formation-dialog"><DialogHeader><span className="formation-eyebrow">{offer.rated?'일반 매칭':'친구 대국 · 비랭크'} · {seconds}초</span><DialogTitle>상대를 찾았습니다</DialogTitle><DialogDescription>포진을 고르고 수락해 주세요. 양쪽 모두 수락하면 초시계와 대국이 시작됩니다. 상대의 포진은 시작 후 공개됩니다.</DialogDescription></DialogHeader><MatchOpponent opponent={offer.opponent} /><div className="online-formation-options">{formations.map((item) => <button type="button" disabled={busy || offer.accepted || seconds===0} key={item.value} className={value === item.value ? 'selected' : ''} aria-pressed={value === item.value} onClick={() => onChange(item.value)}><span><i>車</i>{item.order.map((kind, index) => <b key={`${kind}-${index}`}>{kind === 'horse' ? '馬' : '象'}</b>)}<i>車</i></span><strong>{item.label}</strong></button>)}</div><p aria-live="polite">{offer.accepted?'수락 완료 · 상대를 기다리고 있습니다.':offer.opponentAccepted?'상대가 수락했습니다.':'상대도 포진을 선택하고 있습니다.'}</p>{error && <p role="alert" className="form-error">{error}</p>}<button className="formation-start" disabled={busy || offer.accepted || seconds===0} onClick={onConfirm}><Swords size={18} />{offer.accepted?'상대 수락 대기':'이 포진으로 수락'}</button><button className="text-btn" disabled={busy || seconds===0} onClick={onReject}>대국 거절</button></DialogContent></Dialog>;
 }
 
 function EmptyTab({ icon: Icon, eyebrow, title, text, action, href }: { icon: typeof History; eyebrow: string; title: string; text: string; action: string; href?: string }) {

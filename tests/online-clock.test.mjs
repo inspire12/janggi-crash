@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { readClock, timeControls } from '../lib/game-clock.ts';
+import { connectionState, disconnectMs } from '../lib/battle-presence.ts';
 
 async function fixture(mode, elapsed) {
   const match = { id: 'match', cho_user_id: 'cho', han_user_id: 'han', status: 'active', turn: 'cho', board_json: '[]', version: 0,
@@ -27,6 +28,7 @@ async function fixture(mode, elapsed) {
     '@/lib/rating': { eloChange: () => 16, rankForScore: () => ({ name: '18급' }) },
     '@/lib/supabase-events': { publishMatchEvent: async () => {} },
     '@/lib/game-clock': { readClock, timeControls },
+    '@/lib/battle-presence': { connectionState, disconnectMs },
   };
   const context = vm.createContext({ Response, URL, Date: class extends Date { static now() { return 1000 + elapsed; } } });
   const source = ts.transpileModule(readFileSync(new URL('../app/api/matches/route.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;

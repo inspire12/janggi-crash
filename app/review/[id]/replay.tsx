@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { replayRecord, type RecordEvent } from '@/lib/game-record';
 import { pieceLabel } from '@/lib/janggi';
 import JanggiBoardMarks from '@/components/janggi-board-marks';
-const labels:Record<string,string>={start:'시작 포진',checkpoint:'중간 저장 지점',move:'이동',takeback:'무르기',resign:'기권',timeout:'시간패'};
+const labels:Record<string,string>={start:'시작 포진',checkpoint:'중간 저장 지점',move:'이동',takeback:'무르기',resign:'기권',timeout:'시간패',disconnect:'접속 끊김'};
 export default function Replay({id}:{id:string}) {
   const [events,setEvents]=useState<RecordEvent[]>([]), [index,setIndex]=useState(0), [error,setError]=useState('');
   useEffect(()=>{

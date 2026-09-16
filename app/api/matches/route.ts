@@ -5,6 +5,7 @@ import { applyMove, isCheckmate, legalMoves, type Piece, type Side } from '@/lib
 import { eloChange, rankForScore } from '@/lib/rating';
 import { publishMatchEvent } from '@/lib/supabase-events';
 import { readClock, timeControls } from '@/lib/game-clock';
+import { connectionState, disconnectMs } from '@/lib/battle-presence';
 
 type MatchRow = {
   id: string;
@@ -94,6 +95,7 @@ export async function GET(request: Request) {
       status: match.status,
       turn: match.turn,
       board: JSON.parse(match.board_json) as Piece[],
+      previousBoard: match.previous_board_json ? JSON.parse(match.previous_board_json) as Piece[] : null,
       version: match.version,
       moveCount: moveInfo && moveInfo.incomplete === false ? Math.max(0,moveInfo.count) : null,
       winnerSide:
@@ -126,12 +128,32 @@ export async function POST(request: Request) {
   if (!account || account.terms_accepted_at === 0) return Response.json({ error: '게임 계정 생성이 필요합니다.' }, { status: 403 });
   const body = (await request.json().catch(() => ({}))) as {
     matchId?: string;
-    action?: 'move' | 'resign' | 'takeback-request' | 'takeback-accept' | 'takeback-reject' | 'claim-timeout';
+    action?: 'move' | 'resign' | 'takeback-request' | 'takeback-accept' | 'takeback-reject' | 'claim-timeout' | 'heartbeat';
     pieceId?: string;
     to?: { x?: number; y?: number };
     version?: number;
   };
   if (!body.matchId) return Response.json({ error: '대국 ID가 필요합니다.' }, { status: 400 });
+  if(body.action==='heartbeat') {
+    return getDatabase().transaction(async db=>{
+      const match=await db.prepare('SELECT * FROM matches WHERE id=? AND (cho_user_id=? OR han_user_id=?) FOR UPDATE').bind(body.matchId!,user.userId,user.userId).first<MatchRow & {cho_seen_at:string|null;han_seen_at:string|null}>();
+      if(!match)return Response.json({error:'대국을 찾을 수 없습니다.'},{status:404});
+      if(match.status!=='active')return Response.json({finished:true});
+      const now=Date.now();
+      const state=connectionState(match.cho_seen_at===null?null:Number(match.cho_seen_at),match.han_seen_at===null?null:Number(match.han_seen_at),now);
+      if(state.loser) {
+        const loser=state.loser==='cho'?match.cho_user_id:match.han_user_id;
+        const winner=state.loser==='cho'?match.han_user_id:match.cho_user_id;
+        await finishMatch(match,winner,loser,'disconnect',db);
+        return Response.json({finished:true});
+      }
+      const side=match.cho_user_id===user.userId?'cho':'han';
+      if(state.bothAbsent)await db.prepare('UPDATE matches SET cho_seen_at=?,han_seen_at=? WHERE id=?').bind(now,now,match.id).run();
+      else await db.prepare(`UPDATE matches SET ${side}_seen_at=?, ${side==='cho'?'han':'cho'}_seen_at=COALESCE(${side==='cho'?'han':'cho'}_seen_at,?) WHERE id=?`).bind(now,now,match.id).run();
+      const opponentAge=state.bothAbsent?0:side==='cho'?state.hanAge:state.choAge;
+      return Response.json({finished:false,opponentAway:opponentAge>=10000,remainingMs:Math.max(0,disconnectMs-opponentAge)});
+    },736421);
+  }
   const match = await ownedMatch(body.matchId, user.userId);
   if (!match || match.status !== 'active') {
     return Response.json({ error: '진행 중인 대국이 아닙니다.' }, { status: 409 });
@@ -276,8 +298,7 @@ export async function POST(request: Request) {
   return Response.json({ ok: true, checkmate, version: match.version + 1 });
 }
 
-async function finishMatch(match: MatchRow, winnerId: string, loserId: string, reason: string) {
-  const db = getDatabase();
+async function finishMatch(match: MatchRow, winnerId: string, loserId: string, reason: string, db = getDatabase()) {
   const now = Date.now();
   const elapsed = Math.max(0, now - match.turn_started_at);
   const choTimeMs = Math.max(0, match.cho_time_ms - (match.turn === 'cho' ? elapsed : 0));
@@ -291,13 +312,12 @@ async function finishMatch(match: MatchRow, winnerId: string, loserId: string, r
       )
       .bind(winnerId, reason, now, choTimeMs, hanTimeMs,
         JSON.stringify({ kind: reason, actorUserId: loserId }), match.id, match.version);
-  const [result] = await db.batch([update, ...(match.rated ? await ratingStatements(winnerId, loserId) : [])], true);
+  const [result] = await db.batch([update, ...(match.rated ? await ratingStatements(winnerId, loserId,db) : [])], true);
   return result.meta.changes === 1;
 }
 
-async function ratingStatements(winnerId: string, loserId: string) {
-  const db = getDatabase();
-  const [winner, loser] = await Promise.all([player(winnerId), player(loserId)]);
+async function ratingStatements(winnerId: string, loserId: string, db = getDatabase()) {
+  const [winner, loser] = await Promise.all([db.prepare('SELECT elo FROM players WHERE id=?').bind(winnerId).first<{elo:number}>(),db.prepare('SELECT elo FROM players WHERE id=?').bind(loserId).first<{elo:number}>()]);
   const delta = eloChange(winner?.elo ?? 1200, loser?.elo ?? 1200);
   return [
     db

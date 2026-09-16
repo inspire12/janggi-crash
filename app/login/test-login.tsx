@@ -11,7 +11,8 @@ export default function TestLogin() {
     try {
       const response = await fetch('/api/dev-login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slot, password }) });
       if (!response.ok) throw new Error('테스트 계정과 암호를 확인하세요.');
-      window.location.assign('/lobby');
+      const returnTo=new URLSearchParams(window.location.search).get('return_to');
+      window.location.assign(returnTo && /^\/battle\/[0-9a-f-]{36}$/i.test(returnTo)?returnTo:'/lobby');
     } catch (cause) { setError(cause instanceof Error ? cause.message : '연결 실패'); setBusy(false); }
   }}>
     <p>개발 전용 · 운영 계정과 전적에 영향을 주지 않습니다.</p>
